@@ -1,0 +1,4 @@
+# Force LF everywhere, regardless of the contributor's OS/git config. Windows' core.autocrlf
+# only affects local working-tree checkouts, not what's stored -- this belt-and-suspenders rule
+# avoids any ambiguity (ruff's import-sort rule, for one, misbehaves on CRLF-ending files).
+* text=auto eol=lf
