@@ -1,0 +1,60 @@
+# Full-data (Kaggle/Colab) settings. Every value here is copied verbatim from the notebook's
+# `CFG` dict (section 2) — nothing about the modelling logic changes, only where the numbers live.
+#
+# Paths are NOT here on purpose: they come from the environment/platform (TAOBAO_DATA_DIR,
+# TAOBAO_ARTIFACT_DIR, MLFLOW_TRACKING_URI), resolved in src/taobao_ctr/config.py.
+#
+# For local/CI runs, params.synthetic.yaml overrides a few keys below to keep everything tiny
+# and fast. See config.py / docs/mlops_guide.md for how the two files are merged.
+
+seed: 42
+
+data:
+  kaggle_dataset: "zerotrustai/taobao-ad-display-click"
+  seq_len: 50               # last N behaviour actions kept per impression
+  n_buckets: 32              # behaviour log is streamed into this many user buckets to keep RAM low
+  chunk_rows: 10_000_000     # CSV chunk size while streaming the behaviour log
+
+features:
+  te_alpha: 20               # smoothing (alpha) for the time-ordered click-rate (target) encodings
+
+model:
+  emb_dim: 16
+  tower_dim: 64
+  n_heads: 4
+  n_query_tokens: 4
+
+train:
+  lr: 0.001
+  batch_size: 4096
+  dropout: 0.1
+  optimizer: "adam"
+  weight_decay: 0.0
+  loss: "bce"
+  gamma: 2.0
+  pos_weight: 1.0
+  cotrain_weight: 0.5        # 3-tower loss = BCE(rich) + cotrain_weight * BCE(two-tower head)
+  max_epochs: 2              # upper limit; best-checkpoint early stopping decides the actual stop
+  eval_every_rows: 4_000_000 # check validation AUC every ~4M training rows
+  patience: 3                # stop after this many checks without improvement
+
+  lightgbm:                  # the classic baseline's own settings (notebook section 8)
+    learning_rate: 0.05
+    num_leaves: 63
+    min_data_in_leaf: 200
+    feature_fraction: 0.8
+    bagging_fraction: 0.8
+    bagging_freq: 1
+    num_boost_round: 1000
+    early_stopping_rounds: 50
+    log_evaluation_every: 50
+
+tune:
+  tune_models: ["3-tower co-train", "Two-tower", "MLP", "MLP + sequence", "Transformer"]
+  tune_rows: 3_000_000       # each trial trains on a random subset of this many fit rows, 1 epoch
+  tune_val_rows: 1_000_000   # ...and is scored on this many validation rows
+  tune_trials: 15            # trials per model (upper limit)
+  tune_timeout_min: 12       # or stop a model's search after this many minutes
+
+serve:
+  cascade_top_frac: 0.4      # the 3-tower re-scores only the top fraction of two-tower-head candidates

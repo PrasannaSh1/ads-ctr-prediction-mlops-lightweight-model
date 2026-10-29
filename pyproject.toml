@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "taobao_ctr"
+version = "0.1.0"
+description = "Click-through-rate prediction on the Taobao display-ads dataset: LightGBM + deep two-/three-tower models, served as a two-stage scorer."
+requires-python = ">=3.13"
+readme = "README.md"
+dependencies = [
+    "numpy==2.5.4",
+    "pandas==3.1.0",
+    "pyarrow==25.0.1",
+    "torch==2.15.0",
+    "lightgbm==4.7.0",
+    "optuna==5.0.0",
+    "mlflow==3.17.2",
+    "kagglehub==1.0.3",
+    "pydantic==2.14.1",
+    "pydantic-settings==2.16.2",
+    "pyyaml==6.0.3",
+    "fastapi==0.162.0",
+    "uvicorn==0.54.0",
+    "scikit-learn==1.9.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.2.0",
+    "pytest-cov==7.0.0",
+    "ruff==0.17.3",
+    "dvc==3.67.1",
+    "httpx==0.28.1",
+]
+
+[project.scripts]
+taobao-ctr = "taobao_ctr.pipeline:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

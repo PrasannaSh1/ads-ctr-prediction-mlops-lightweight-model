@@ -1,0 +1,156 @@
+vars:
+  - models: &models
+      - "3-tower co-train"
+      - "Two-tower"
+      - "MLP"
+      - "MLP + sequence"
+      - "Transformer"
+  - tune_models: &tune_models
+      - "3-tower co-train"
+      - "Two-tower"
+      - "MLP"
+      - "MLP + sequence"
+      - "Transformer"
+
+stages:
+  prepare_impressions:
+    cmd: python -m taobao_ctr.pipeline prepare_impressions --profile synthetic
+    deps:
+      - src/taobao_ctr/pipeline.py
+      - src/taobao_ctr/pipeline_stages.py
+      - src/taobao_ctr/data/impressions.py
+      - src/taobao_ctr/data/download.py
+      - params.synthetic.yaml
+    params:
+      - data.kaggle_dataset
+    outs:
+      - artifacts/cache/impressions.npz
+      - artifacts/cache/sizes_partial.json
+
+  build_history:
+    cmd: python -m taobao_ctr.pipeline build_history --profile synthetic
+    deps:
+      - artifacts/cache/impressions.npz
+      - artifacts/cache/sizes_partial.json
+      - src/taobao_ctr/data/history.py
+      - params.synthetic.yaml
+    params:
+      - data.n_buckets
+      - data.chunk_rows
+      - data.seq_len
+    outs:
+      - artifacts/cache/vocab.npz
+      - artifacts/cache/history.npz
+      - artifacts/cache/sizes.json
+      - artifacts/cache/ad_features.npz
+
+  click_rates:
+    cmd: python -m taobao_ctr.pipeline click_rates --profile synthetic
+    deps:
+      - artifacts/cache/impressions.npz
+      - artifacts/cache/ad_features.npz
+      - artifacts/cache/sizes.json
+      - src/taobao_ctr/features/click_rates.py
+    params:
+      - features.te_alpha
+    outs:
+      - artifacts/cache/split.npz
+      - artifacts/cache/TE.npy
+
+  train_lightgbm:
+    cmd: python -m taobao_ctr.pipeline train_lightgbm --profile synthetic
+    deps:
+      - artifacts/cache/TE.npy
+      - artifacts/cache/split.npz
+      - artifacts/cache/history.npz
+      - src/taobao_ctr/training/lightgbm_train.py
+      - src/taobao_ctr/features/interactions.py
+    params:
+      - train.lightgbm
+    metrics:
+      - artifacts/metrics/LightGBM/default.json:
+          cache: false
+    outs:
+      - artifacts/preds/LightGBM/default.npz
+      - artifacts/models/LightGBM/default.txt
+
+  train_deep:
+    foreach: *models
+    do:
+      cmd: python -m taobao_ctr.pipeline train_deep --profile synthetic --name "${item}"
+      deps:
+        - artifacts/cache/TE.npy
+        - artifacts/cache/split.npz
+        - artifacts/cache/history.npz
+        - src/taobao_ctr/models
+        - src/taobao_ctr/training/trainer.py
+        - src/taobao_ctr/training/batches.py
+      params:
+        - model
+        - train.lr
+        - train.batch_size
+        - train.dropout
+        - train.optimizer
+        - train.weight_decay
+        - train.loss
+        - train.max_epochs
+        - train.eval_every_rows
+        - train.patience
+      metrics:
+        - artifacts/metrics/${item}/default.json:
+            cache: false
+      outs:
+        - artifacts/preds/${item}/default.npz
+        - artifacts/models/${item}/default.pt
+
+  tune:
+    foreach: *tune_models
+    do:
+      cmd: python -m taobao_ctr.pipeline tune --profile synthetic --name "${item}"
+      deps:
+        - artifacts/cache/TE.npy
+        - artifacts/cache/split.npz
+        - artifacts/cache/history.npz
+        - src/taobao_ctr/training/tune.py
+      params:
+        - tune
+      metrics:
+        - artifacts/metrics/${item}/tuned.json:
+            cache: false
+
+  evaluate:
+    cmd: python -m taobao_ctr.pipeline evaluate --profile synthetic
+    deps:
+      - artifacts/metrics
+      - src/taobao_ctr/evaluation/compare.py
+    outs:
+      - artifacts/results.csv
+
+  combine:
+    cmd: python -m taobao_ctr.pipeline combine --profile synthetic
+    deps:
+      - artifacts/results.csv
+      - artifacts/preds
+      - src/taobao_ctr/evaluation/combine.py
+    params:
+      - serve.cascade_top_frac
+    outs:
+      - artifacts/combinations.csv
+
+  register:
+    cmd: python -m taobao_ctr.pipeline register --profile synthetic
+    deps:
+      - artifacts/results.csv
+      - artifacts/models
+      - src/taobao_ctr/tracking/mlflow_utils.py
+    outs:
+      - artifacts/registered.json
+
+  monitor:
+    cmd: python -m taobao_ctr.pipeline monitor --profile synthetic
+    deps:
+      - artifacts/results.csv
+      - artifacts/preds
+      - src/taobao_ctr/monitoring/report.py
+    outs:
+      - reports/monitoring.md

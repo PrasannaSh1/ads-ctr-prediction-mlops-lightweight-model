@@ -1,0 +1,26 @@
+# Optional: a GPU image for running the full training pipeline in a Kaggle/Colab-like
+# container, outside this repo's local/CI synthetic-only path (see constraint in
+# PROMPT_taobao_ctr_mlops.md: the real run happens on Kaggle or Colab). Not built by CI.
+
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+
+# Ubuntu 22.04's default repos only ship Python 3.10; this project requires >=3.13 (see
+# pyproject.toml), so pull it from deadsnakes.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends software-properties-common \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends python3.13 python3.13-venv python3-pip git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY pyproject.toml dvc.yaml params.yaml params.synthetic.yaml ./
+COPY src/ src/
+COPY scripts/ scripts/
+
+RUN python3.13 -m pip install --no-cache-dir -e ".[dev]"
+
+ENV TAOBAO_PROFILE=full
+
+ENTRYPOINT ["python3.13", "-m", "taobao_ctr.pipeline"]
+CMD ["train_deep", "--profile", "full", "--name", "3-tower co-train"]

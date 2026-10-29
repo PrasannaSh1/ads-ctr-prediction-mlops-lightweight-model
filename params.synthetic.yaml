@@ -1,0 +1,21 @@
+# Overrides applied on top of params.yaml when running locally / in CI on the synthetic dataset.
+# Only keys that need to shrink for a laptop CPU are listed here; everything else (model sizes,
+# te_alpha, cascade_top_frac, ...) is inherited unchanged from params.yaml so the pipeline logic
+# being exercised is identical, just on less data.
+#
+# Selected with the TAOBAO_PROFILE=synthetic environment variable (see config.py).
+
+data:
+  n_buckets: 4
+  chunk_rows: 100_000
+
+train:
+  eval_every_rows: 20_000
+  batch_size: 1024
+  lightgbm:
+    min_data_in_leaf: 5     # the real default (200) would refuse to split on a tiny synthetic dataset
+
+tune:
+  tune_rows: 20_000
+  tune_val_rows: 5_000
+  tune_trials: 4

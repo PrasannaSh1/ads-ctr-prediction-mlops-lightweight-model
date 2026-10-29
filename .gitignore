@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Data, models, caches, tracking stores — never commit these
+data/
+artifacts/
+mlruns/
+mlflow.db
+mlflow.db-*
+optuna.db
+optuna.db-*
+*.ckpt
+*.pt
+*.pth
+*.npz
+reports/
+
+# DVC-managed outputs stay local; only dvc.yaml/dvc.lock/params*.yaml are tracked
+/data
+/artifacts
+.dvc/cache/
+.dvc/tmp/
+
+# Secrets / env
+.env
+kaggle.json
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+
+# Never publish the handoff prompt itself
+PROMPT_taobao_ctr_mlops.md

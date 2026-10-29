@@ -1,0 +1,719 @@
+schema: '2.0'
+stages:
+  prepare_impressions:
+    cmd: python -m taobao_ctr.pipeline prepare_impressions --profile synthetic
+    deps:
+    - path: params.synthetic.yaml
+      hash: md5
+      md5: 1c8aa0006bd13664ccbe5c5be98aa9af
+      size: 705
+    - path: src/taobao_ctr/data/download.py
+      hash: md5
+      md5: 0199fba6cd8c79fd4a44660947087a91
+      size: 2768
+    - path: src/taobao_ctr/data/impressions.py
+      hash: md5
+      md5: fd5064cf499e97981591d72b738c18b2
+      size: 4107
+    - path: src/taobao_ctr/pipeline.py
+      hash: md5
+      md5: be41b47f88833a822725cfeb01ff8f3b
+      size: 6579
+    - path: src/taobao_ctr/pipeline_stages.py
+      hash: md5
+      md5: 0832a07df548ea48dad1226b5f37fc0b
+      size: 11765
+    params:
+      params.yaml:
+        data.kaggle_dataset: zerotrustai/taobao-ad-display-click
+    outs:
+    - path: artifacts/cache/impressions.npz
+      hash: md5
+      md5: 81f9adffedf72ee8c32d61415ca6336b
+      size: 414176
+    - path: artifacts/cache/sizes_partial.json
+      hash: md5
+      md5: 85b8a7005adcc365bb3cc2157b1e7ed3
+      size: 239
+  build_history:
+    cmd: python -m taobao_ctr.pipeline build_history --profile synthetic
+    deps:
+    - path: artifacts/cache/impressions.npz
+      hash: md5
+      md5: 81f9adffedf72ee8c32d61415ca6336b
+      size: 414176
+    - path: artifacts/cache/sizes_partial.json
+      hash: md5
+      md5: 85b8a7005adcc365bb3cc2157b1e7ed3
+      size: 239
+    - path: params.synthetic.yaml
+      hash: md5
+      md5: 1c8aa0006bd13664ccbe5c5be98aa9af
+      size: 705
+    - path: src/taobao_ctr/data/history.py
+      hash: md5
+      md5: 1d89422737d9340a0132ed63837c0abe
+      size: 8534
+    params:
+      params.yaml:
+        data.chunk_rows: 10000000
+        data.n_buckets: 32
+        data.seq_len: 50
+    outs:
+    - path: artifacts/cache/ad_features.npz
+      hash: md5
+      md5: 47439b1a9ef1e1993087a423f53fed51
+      size: 32516
+    - path: artifacts/cache/history.npz
+      hash: md5
+      md5: 1b4c12e26d802fdc0b5bb69bae319e98
+      size: 142973
+    - path: artifacts/cache/sizes.json
+      hash: md5
+      md5: 148169c1e580cf5816555e1e949cfa34
+      size: 296
+    - path: artifacts/cache/vocab.npz
+      hash: md5
+      md5: 222fba7eba89bb609432cc0b1842d794
+      size: 2728
+  click_rates:
+    cmd: python -m taobao_ctr.pipeline click_rates --profile synthetic
+    deps:
+    - path: artifacts/cache/ad_features.npz
+      hash: md5
+      md5: 47439b1a9ef1e1993087a423f53fed51
+      size: 32516
+    - path: artifacts/cache/impressions.npz
+      hash: md5
+      md5: 81f9adffedf72ee8c32d61415ca6336b
+      size: 414176
+    - path: artifacts/cache/sizes.json
+      hash: md5
+      md5: 148169c1e580cf5816555e1e949cfa34
+      size: 296
+    - path: src/taobao_ctr/features/click_rates.py
+      hash: md5
+      md5: fcd00dd0a1b375d090a1a0f71d597236
+      size: 2977
+    params:
+      params.yaml:
+        features.te_alpha: 20
+    outs:
+    - path: artifacts/cache/TE.npy
+      hash: md5
+      md5: 6fe0c3e2a11da2725f6686b93bd72a7e
+      size: 128128
+    - path: artifacts/cache/split.npz
+      hash: md5
+      md5: 8758650cd671e3cefd0915035925ca03
+      size: 61148
+  train_lightgbm:
+    cmd: python -m taobao_ctr.pipeline train_lightgbm --profile synthetic
+    deps:
+    - path: artifacts/cache/TE.npy
+      hash: md5
+      md5: 6fe0c3e2a11da2725f6686b93bd72a7e
+      size: 128128
+    - path: artifacts/cache/history.npz
+      hash: md5
+      md5: 1b4c12e26d802fdc0b5bb69bae319e98
+      size: 142973
+    - path: artifacts/cache/split.npz
+      hash: md5
+      md5: 8758650cd671e3cefd0915035925ca03
+      size: 61148
+    - path: src/taobao_ctr/features/interactions.py
+      hash: md5
+      md5: 64c3dbbd4e1a948827bcd53c071d3bb6
+      size: 1310
+    - path: src/taobao_ctr/training/lightgbm_train.py
+      hash: md5
+      md5: b0e75e996e1f62813e64957fe5198999
+      size: 1796
+    params:
+      params.yaml:
+        train.lightgbm:
+          learning_rate: 0.05
+          num_leaves: 63
+          min_data_in_leaf: 200
+          feature_fraction: 0.8
+          bagging_fraction: 0.8
+          bagging_freq: 1
+          num_boost_round: 1000
+          early_stopping_rounds: 50
+          log_evaluation_every: 50
+    outs:
+    - path: artifacts/metrics/LightGBM/default.json
+      hash: md5
+      md5: a32f7e870d53401874ae966ce6639823
+      size: 477
+    - path: artifacts/models/LightGBM/default.txt
+      hash: md5
+      md5: c45076e7a9320f5449c90c3e496e18f3
+      size: 63385
+    - path: artifacts/preds/LightGBM/default.npz
+      hash: md5
+      md5: e0d42e29f85346575c714efa61e7e3ae
+      size: 7204
+  train_deep@3-tower co-train:
+    cmd: python -m taobao_ctr.pipeline train_deep --profile synthetic --name 
+      "3-tower co-train"
+    deps:
+    - path: artifacts/cache/TE.npy
+      hash: md5
+      md5: 6fe0c3e2a11da2725f6686b93bd72a7e
+      size: 128128
+    - path: artifacts/cache/history.npz
+      hash: md5
+      md5: 1b4c12e26d802fdc0b5bb69bae319e98
+      size: 142973
+    - path: artifacts/cache/split.npz
+      hash: md5
+      md5: 8758650cd671e3cefd0915035925ca03
+      size: 61148
+    - path: src/taobao_ctr/models
+      hash: md5
+      md5: 6f23036bba0afcb83814ca6fb26b0738.dir
+      size: 30471
+      nfiles: 10
+    - path: src/taobao_ctr/training/batches.py
+      hash: md5
+      md5: d7601490a4a88f17333e313d6b013c78
+      size: 1682
+    - path: src/taobao_ctr/training/trainer.py
+      hash: md5
+      md5: b6605bc61f9f4be9743dda48ab730509
+      size: 4920
+    params:
+      params.yaml:
+        model:
+          emb_dim: 16
+          tower_dim: 64
+          n_heads: 4
+          n_query_tokens: 4
+        train.batch_size: 4096
+        train.dropout: 0.1
+        train.eval_every_rows: 4000000
+        train.loss: bce
+        train.lr: 0.001
+        train.max_epochs: 2
+        train.optimizer: adam
+        train.patience: 3
+        train.weight_decay: 0.0
+    outs:
+    - path: artifacts/metrics/3-tower co-train/default.json
+      hash: md5
+      md5: 32e1daf2ad296af4fbd3967620dcb219
+      size: 504
+    - path: artifacts/models/3-tower co-train/default.pt
+      hash: md5
+      md5: 8e19f14efbbd13e56b3dc51e31e93f2e
+      size: 1082625
+    - path: artifacts/preds/3-tower co-train/default.npz
+      hash: md5
+      md5: 19cc982a4b41031fbd23cfcaec6c12e7
+      size: 7738
+  train_deep@Two-tower:
+    cmd: python -m taobao_ctr.pipeline train_deep --profile synthetic --name 
+      "Two-tower"
+    deps:
+    - path: artifacts/cache/TE.npy
+      hash: md5
+      md5: 6fe0c3e2a11da2725f6686b93bd72a7e
+      size: 128128
+    - path: artifacts/cache/history.npz
+      hash: md5
+      md5: 1b4c12e26d802fdc0b5bb69bae319e98
+      size: 142973
+    - path: artifacts/cache/split.npz
+      hash: md5
+      md5: 8758650cd671e3cefd0915035925ca03
+      size: 61148
+    - path: src/taobao_ctr/models
+      hash: md5
+      md5: 6f23036bba0afcb83814ca6fb26b0738.dir
+      size: 30471
+      nfiles: 10
+    - path: src/taobao_ctr/training/batches.py
+      hash: md5
+      md5: d7601490a4a88f17333e313d6b013c78
+      size: 1682
+    - path: src/taobao_ctr/training/trainer.py
+      hash: md5
+      md5: b6605bc61f9f4be9743dda48ab730509
+      size: 4920
+    params:
+      params.yaml:
+        model:
+          emb_dim: 16
+          tower_dim: 64
+          n_heads: 4
+          n_query_tokens: 4
+        train.batch_size: 4096
+        train.dropout: 0.1
+        train.eval_every_rows: 4000000
+        train.loss: bce
+        train.lr: 0.001
+        train.max_epochs: 2
+        train.optimizer: adam
+        train.patience: 3
+        train.weight_decay: 0.0
+    outs:
+    - path: artifacts/metrics/Two-tower/default.json
+      hash: md5
+      md5: 1308eb8cc3c976b69700eae6f01be1ae
+      size: 461
+    - path: artifacts/models/Two-tower/default.pt
+      hash: md5
+      md5: 2cb34b27c99e6e416b93bbdc43e73721
+      size: 772291
+    - path: artifacts/preds/Two-tower/default.npz
+      hash: md5
+      md5: a877f5ac3081e052cf48e79b51ea4a81
+      size: 3864
+  train_deep@MLP:
+    cmd: python -m taobao_ctr.pipeline train_deep --profile synthetic --name 
+      "MLP"
+    deps:
+    - path: artifacts/cache/TE.npy
+      hash: md5
+      md5: 6fe0c3e2a11da2725f6686b93bd72a7e
+      size: 128128
+    - path: artifacts/cache/history.npz
+      hash: md5
+      md5: 1b4c12e26d802fdc0b5bb69bae319e98
+      size: 142973
+    - path: artifacts/cache/split.npz
+      hash: md5
+      md5: 8758650cd671e3cefd0915035925ca03
+      size: 61148
+    - path: src/taobao_ctr/models
+      hash: md5
+      md5: 6f23036bba0afcb83814ca6fb26b0738.dir
+      size: 30471
+      nfiles: 10
+    - path: src/taobao_ctr/training/batches.py
+      hash: md5
+      md5: d7601490a4a88f17333e313d6b013c78
+      size: 1682
+    - path: src/taobao_ctr/training/trainer.py
+      hash: md5
+      md5: b6605bc61f9f4be9743dda48ab730509
+      size: 4920
+    params:
+      params.yaml:
+        model:
+          emb_dim: 16
+          tower_dim: 64
+          n_heads: 4
+          n_query_tokens: 4
+        train.batch_size: 4096
+        train.dropout: 0.1
+        train.eval_every_rows: 4000000
+        train.loss: bce
+        train.lr: 0.001
+        train.max_epochs: 2
+        train.optimizer: adam
+        train.patience: 3
+        train.weight_decay: 0.0
+    outs:
+    - path: artifacts/metrics/MLP/default.json
+      hash: md5
+      md5: cd5cdbd9e0b95713af332794ef670817
+      size: 452
+    - path: artifacts/models/MLP/default.pt
+      hash: md5
+      md5: 0cebfe63448107086c726f2fea651e83
+      size: 557592
+    - path: artifacts/preds/MLP/default.npz
+      hash: md5
+      md5: 0038182950ad98f0f9c7f6a58ff1147c
+      size: 3864
+  train_deep@MLP + sequence:
+    cmd: python -m taobao_ctr.pipeline train_deep --profile synthetic --name 
+      "MLP + sequence"
+    deps:
+    - path: artifacts/cache/TE.npy
+      hash: md5
+      md5: 6fe0c3e2a11da2725f6686b93bd72a7e
+      size: 128128
+    - path: artifacts/cache/history.npz
+      hash: md5
+      md5: 1b4c12e26d802fdc0b5bb69bae319e98
+      size: 142973
+    - path: artifacts/cache/split.npz
+      hash: md5
+      md5: 8758650cd671e3cefd0915035925ca03
+      size: 61148
+    - path: src/taobao_ctr/models
+      hash: md5
+      md5: 6f23036bba0afcb83814ca6fb26b0738.dir
+      size: 30471
+      nfiles: 10
+    - path: src/taobao_ctr/training/batches.py
+      hash: md5
+      md5: d7601490a4a88f17333e313d6b013c78
+      size: 1682
+    - path: src/taobao_ctr/training/trainer.py
+      hash: md5
+      md5: b6605bc61f9f4be9743dda48ab730509
+      size: 4920
+    params:
+      params.yaml:
+        model:
+          emb_dim: 16
+          tower_dim: 64
+          n_heads: 4
+          n_query_tokens: 4
+        train.batch_size: 4096
+        train.dropout: 0.1
+        train.eval_every_rows: 4000000
+        train.loss: bce
+        train.lr: 0.001
+        train.max_epochs: 2
+        train.optimizer: adam
+        train.patience: 3
+        train.weight_decay: 0.0
+    outs:
+    - path: artifacts/metrics/MLP + sequence/default.json
+      hash: md5
+      md5: b0af70e06d8c51187d2130a1f5c72de2
+      size: 464
+    - path: artifacts/models/MLP + sequence/default.pt
+      hash: md5
+      md5: e39bfc1ee655cf6dd351143ddce6f33a
+      size: 573976
+    - path: artifacts/preds/MLP + sequence/default.npz
+      hash: md5
+      md5: c1ed142ad77a9e0d95102abc241db08f
+      size: 3864
+  train_deep@Transformer:
+    cmd: python -m taobao_ctr.pipeline train_deep --profile synthetic --name 
+      "Transformer"
+    deps:
+    - path: artifacts/cache/TE.npy
+      hash: md5
+      md5: 6fe0c3e2a11da2725f6686b93bd72a7e
+      size: 128128
+    - path: artifacts/cache/history.npz
+      hash: md5
+      md5: 1b4c12e26d802fdc0b5bb69bae319e98
+      size: 142973
+    - path: artifacts/cache/split.npz
+      hash: md5
+      md5: 8758650cd671e3cefd0915035925ca03
+      size: 61148
+    - path: src/taobao_ctr/models
+      hash: md5
+      md5: 6f23036bba0afcb83814ca6fb26b0738.dir
+      size: 30471
+      nfiles: 10
+    - path: src/taobao_ctr/training/batches.py
+      hash: md5
+      md5: d7601490a4a88f17333e313d6b013c78
+      size: 1682
+    - path: src/taobao_ctr/training/trainer.py
+      hash: md5
+      md5: b6605bc61f9f4be9743dda48ab730509
+      size: 4920
+    params:
+      params.yaml:
+        model:
+          emb_dim: 16
+          tower_dim: 64
+          n_heads: 4
+          n_query_tokens: 4
+        train.batch_size: 4096
+        train.dropout: 0.1
+        train.eval_every_rows: 4000000
+        train.loss: bce
+        train.lr: 0.001
+        train.max_epochs: 2
+        train.optimizer: adam
+        train.patience: 3
+        train.weight_decay: 0.0
+    outs:
+    - path: artifacts/metrics/Transformer/default.json
+      hash: md5
+      md5: 10e2b35d243c38d456548779f93b2454
+      size: 462
+    - path: artifacts/models/Transformer/default.pt
+      hash: md5
+      md5: fb1fd01f888a169ea0e87357b36ea7be
+      size: 983047
+    - path: artifacts/preds/Transformer/default.npz
+      hash: md5
+      md5: 48cdbea6b9a45cce12128b1603cea96a
+      size: 3864
+  tune@3-tower co-train:
+    cmd: python -m taobao_ctr.pipeline tune --profile synthetic --name "3-tower 
+      co-train"
+    deps:
+    - path: artifacts/cache/TE.npy
+      hash: md5
+      md5: 6fe0c3e2a11da2725f6686b93bd72a7e
+      size: 128128
+    - path: artifacts/cache/history.npz
+      hash: md5
+      md5: 1b4c12e26d802fdc0b5bb69bae319e98
+      size: 142973
+    - path: artifacts/cache/split.npz
+      hash: md5
+      md5: 8758650cd671e3cefd0915035925ca03
+      size: 61148
+    - path: src/taobao_ctr/training/tune.py
+      hash: md5
+      md5: 7ccfb7c598a852839176fa575d01d80c
+      size: 4507
+    params:
+      params.yaml:
+        tune:
+          tune_models:
+          - 3-tower co-train
+          - Two-tower
+          - MLP
+          - MLP + sequence
+          - Transformer
+          tune_rows: 3000000
+          tune_val_rows: 1000000
+          tune_trials: 15
+          tune_timeout_min: 12
+    outs:
+    - path: artifacts/metrics/3-tower co-train/tuned.json
+      hash: md5
+      md5: eeef98e80ae8928211c12f6bf054605f
+      size: 594
+  tune@Two-tower:
+    cmd: python -m taobao_ctr.pipeline tune --profile synthetic --name 
+      "Two-tower"
+    deps:
+    - path: artifacts/cache/TE.npy
+      hash: md5
+      md5: 6fe0c3e2a11da2725f6686b93bd72a7e
+      size: 128128
+    - path: artifacts/cache/history.npz
+      hash: md5
+      md5: 1b4c12e26d802fdc0b5bb69bae319e98
+      size: 142973
+    - path: artifacts/cache/split.npz
+      hash: md5
+      md5: 8758650cd671e3cefd0915035925ca03
+      size: 61148
+    - path: src/taobao_ctr/training/tune.py
+      hash: md5
+      md5: 7ccfb7c598a852839176fa575d01d80c
+      size: 4507
+    params:
+      params.yaml:
+        tune:
+          tune_models:
+          - 3-tower co-train
+          - Two-tower
+          - MLP
+          - MLP + sequence
+          - Transformer
+          tune_rows: 3000000
+          tune_val_rows: 1000000
+          tune_trials: 15
+          tune_timeout_min: 12
+    outs:
+    - path: artifacts/metrics/Two-tower/tuned.json
+      hash: md5
+      md5: 17b169373a22a287fc8c41115d085958
+      size: 535
+  tune@MLP:
+    cmd: python -m taobao_ctr.pipeline tune --profile synthetic --name "MLP"
+    deps:
+    - path: artifacts/cache/TE.npy
+      hash: md5
+      md5: 6fe0c3e2a11da2725f6686b93bd72a7e
+      size: 128128
+    - path: artifacts/cache/history.npz
+      hash: md5
+      md5: 1b4c12e26d802fdc0b5bb69bae319e98
+      size: 142973
+    - path: artifacts/cache/split.npz
+      hash: md5
+      md5: 8758650cd671e3cefd0915035925ca03
+      size: 61148
+    - path: src/taobao_ctr/training/tune.py
+      hash: md5
+      md5: 7ccfb7c598a852839176fa575d01d80c
+      size: 4507
+    params:
+      params.yaml:
+        tune:
+          tune_models:
+          - 3-tower co-train
+          - Two-tower
+          - MLP
+          - MLP + sequence
+          - Transformer
+          tune_rows: 3000000
+          tune_val_rows: 1000000
+          tune_trials: 15
+          tune_timeout_min: 12
+    outs:
+    - path: artifacts/metrics/MLP/tuned.json
+      hash: md5
+      md5: 293e29d36eafea26bf7138d094665fec
+      size: 525
+  tune@MLP + sequence:
+    cmd: python -m taobao_ctr.pipeline tune --profile synthetic --name "MLP + 
+      sequence"
+    deps:
+    - path: artifacts/cache/TE.npy
+      hash: md5
+      md5: 6fe0c3e2a11da2725f6686b93bd72a7e
+      size: 128128
+    - path: artifacts/cache/history.npz
+      hash: md5
+      md5: 1b4c12e26d802fdc0b5bb69bae319e98
+      size: 142973
+    - path: artifacts/cache/split.npz
+      hash: md5
+      md5: 8758650cd671e3cefd0915035925ca03
+      size: 61148
+    - path: src/taobao_ctr/training/tune.py
+      hash: md5
+      md5: 7ccfb7c598a852839176fa575d01d80c
+      size: 4507
+    params:
+      params.yaml:
+        tune:
+          tune_models:
+          - 3-tower co-train
+          - Two-tower
+          - MLP
+          - MLP + sequence
+          - Transformer
+          tune_rows: 3000000
+          tune_val_rows: 1000000
+          tune_trials: 15
+          tune_timeout_min: 12
+    outs:
+    - path: artifacts/metrics/MLP + sequence/tuned.json
+      hash: md5
+      md5: b73b6acaefbda8d161b2470ee39d04b9
+      size: 542
+  tune@Transformer:
+    cmd: python -m taobao_ctr.pipeline tune --profile synthetic --name 
+      "Transformer"
+    deps:
+    - path: artifacts/cache/TE.npy
+      hash: md5
+      md5: 6fe0c3e2a11da2725f6686b93bd72a7e
+      size: 128128
+    - path: artifacts/cache/history.npz
+      hash: md5
+      md5: 1b4c12e26d802fdc0b5bb69bae319e98
+      size: 142973
+    - path: artifacts/cache/split.npz
+      hash: md5
+      md5: 8758650cd671e3cefd0915035925ca03
+      size: 61148
+    - path: src/taobao_ctr/training/tune.py
+      hash: md5
+      md5: 7ccfb7c598a852839176fa575d01d80c
+      size: 4507
+    params:
+      params.yaml:
+        tune:
+          tune_models:
+          - 3-tower co-train
+          - Two-tower
+          - MLP
+          - MLP + sequence
+          - Transformer
+          tune_rows: 3000000
+          tune_val_rows: 1000000
+          tune_trials: 15
+          tune_timeout_min: 12
+    outs:
+    - path: artifacts/metrics/Transformer/tuned.json
+      hash: md5
+      md5: 704612b79b6ac7a6635e24fd5a40bca3
+      size: 513
+  evaluate:
+    cmd: python -m taobao_ctr.pipeline evaluate --profile synthetic
+    deps:
+    - path: artifacts/metrics
+      hash: md5
+      md5: ca62771e305d4971c9205f26a010b34a.dir
+      size: 5529
+      nfiles: 11
+    - path: src/taobao_ctr/evaluation/compare.py
+      hash: md5
+      md5: ff41d6bd828c5f135d0284e538c239c6
+      size: 1567
+    outs:
+    - path: artifacts/results.csv
+      hash: md5
+      md5: b6fb3be08106b70f7f5f39c184acf2c2
+      size: 1594
+  combine:
+    cmd: python -m taobao_ctr.pipeline combine --profile synthetic
+    deps:
+    - path: artifacts/preds
+      hash: md5
+      md5: 30d29dd40530d48ac89accd7051b00a9.dir
+      size: 53592
+      nfiles: 11
+    - path: artifacts/results.csv
+      hash: md5
+      md5: b6fb3be08106b70f7f5f39c184acf2c2
+      size: 1594
+    - path: src/taobao_ctr/evaluation/combine.py
+      hash: md5
+      md5: 533352c608fb571843a3ae773f06f824
+      size: 3348
+    params:
+      params.yaml:
+        serve.cascade_top_frac: 0.4
+    outs:
+    - path: artifacts/combinations.csv
+      hash: md5
+      md5: ada4ec865a4916c09f80b1363acf8353
+      size: 766
+  register:
+    cmd: python -m taobao_ctr.pipeline register --profile synthetic
+    deps:
+    - path: artifacts/models
+      hash: md5
+      md5: b7e3f83ad31f5a108d1dd3f318219197.dir
+      size: 7993115
+      nfiles: 11
+    - path: artifacts/results.csv
+      hash: md5
+      md5: b6fb3be08106b70f7f5f39c184acf2c2
+      size: 1594
+    - path: src/taobao_ctr/tracking/mlflow_utils.py
+      hash: md5
+      md5: b465208f51c051a1e622f88ceaf15bb3
+      size: 2936
+    outs:
+    - path: artifacts/registered.json
+      hash: md5
+      md5: a8e9b53bc803d1cef777e2b49c3abda6
+      size: 54
+  monitor:
+    cmd: python -m taobao_ctr.pipeline monitor --profile synthetic
+    deps:
+    - path: artifacts/preds
+      hash: md5
+      md5: 30d29dd40530d48ac89accd7051b00a9.dir
+      size: 53592
+      nfiles: 11
+    - path: artifacts/results.csv
+      hash: md5
+      md5: b6fb3be08106b70f7f5f39c184acf2c2
+      size: 1594
+    - path: src/taobao_ctr/monitoring/report.py
+      hash: md5
+      md5: 70d2a63c29e7e96b88bbdee94b18ce6a
+      size: 3489
+    outs:
+    - path: reports/monitoring.md
+      hash: md5
+      md5: 67047f1e655105978f39bb9e16143789
+      size: 1854

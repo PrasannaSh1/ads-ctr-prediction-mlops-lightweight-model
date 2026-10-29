@@ -1,0 +1,31 @@
+# CPU-only serving image: the FastAPI app (src/taobao_ctr/serving/api.py). Builds the ad/user
+# caches and loads the champion 3-tower from MLflow (or a fresh model if none was registered
+# yet) at container start-up, not at build time -- see api.py's create_production_app().
+
+FROM python:3.13-slim
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml ./
+COPY src/ src/
+
+RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu -e .
+
+RUN useradd --create-home --uid 1000 appuser
+USER appuser
+
+ENV TAOBAO_PROFILE=synthetic \
+    TAOBAO_DATA_DIR=/app/data \
+    TAOBAO_ARTIFACT_DIR=/app/artifacts \
+    MLFLOW_TRACKING_URI=sqlite:///mlflow.db
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+CMD ["uvicorn", "taobao_ctr.serving.api:create_production_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]

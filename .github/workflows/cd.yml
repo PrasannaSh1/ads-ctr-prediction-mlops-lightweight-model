@@ -1,0 +1,67 @@
+name: CD
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.vars.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute lowercase image name (GHCR requires it)
+        id: vars
+        run: echo "image=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')-api" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.api
+          push: true
+          tags: |
+            ${{ steps.vars.outputs.image }}:${{ github.ref_name }}
+            ${{ steps.vars.outputs.image }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: false  # disabled until a target + its secrets exist; flip to true once wired up
+    steps:
+      - name: Deploy (TODO -- pick one target below)
+        run: |
+          echo "Image ready at: ${{ needs.build-and-push.outputs.image }}:${{ github.ref_name }}"
+          echo ""
+          echo "TODO: wire up ONE of these and remove the others:"
+          echo ""
+          echo "Render:"
+          echo "  - Add a Render Web Service pointed at this image/registry."
+          echo "  - Add secret RENDER_DEPLOY_HOOK_URL, then: curl -fsS \"\$RENDER_DEPLOY_HOOK_URL\""
+          echo ""
+          echo "Google Cloud Run:"
+          echo "  - Add secrets GCP_PROJECT_ID and GCP_WORKLOAD_IDP (or GCP_SA_KEY)."
+          echo "  - Use google-github-actions/auth + google-github-actions/deploy-cloudrun."
+          echo ""
+          echo "AWS (ECS / App Runner):"
+          echo "  - Add secrets AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION."
+          echo "  - Use aws-actions/amazon-ecs-deploy-task-definition or 'aws apprunner update-service'."
+          exit 1
