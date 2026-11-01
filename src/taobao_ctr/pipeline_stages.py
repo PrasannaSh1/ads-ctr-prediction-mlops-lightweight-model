@@ -11,7 +11,7 @@ import mlflow
 import numpy as np
 import torch
 
-from taobao_ctr.config import AppConfig
+from taobao_ctr.config import Config
 from taobao_ctr.evaluation.combine import evaluate_combinations
 from taobao_ctr.evaluation.compare import load_results, results_table, save_result, selected_row
 from taobao_ctr.models.registry import MODELS
@@ -23,7 +23,6 @@ from taobao_ctr.training.trainer import (
     HP_KEYS,
     default_hp,
     free_memory,
-    get_device,
     metrics,
     predict,
     train_model,
@@ -38,29 +37,29 @@ def _with_parent(path: Path) -> Path:
     return path
 
 
-def _pred_file(cfg: AppConfig, name: str, variant: str) -> Path:
+def _pred_file(cfg: Config, name: str, variant: str) -> Path:
     return _with_parent(cfg.paths.artifact_dir / "preds" / name / f"{variant}.npz")
 
 
-def _model_file(cfg: AppConfig, name: str, variant: str, ext: str) -> Path:
+def _model_file(cfg: Config, name: str, variant: str, ext: str) -> Path:
     return _with_parent(cfg.paths.artifact_dir / "models" / name / f"{variant}.{ext}")
 
 
-def _metrics_file(cfg: AppConfig, name: str, variant: str) -> Path:
+def _metrics_file(cfg: Config, name: str, variant: str) -> Path:
     return _with_parent(cfg.paths.artifact_dir / "metrics" / name / f"{variant}.json")
 
 
-def stage_train_lightgbm(cfg: AppConfig) -> None:
+def stage_train_lightgbm(cfg: Config) -> None:
     init_tracking(cfg.paths.mlflow_tracking_uri)
     dataset, _train, fit_rows, val_rows, test_rows = load_dataset(cfg)
     key, variant = "LightGBM", "default"
     t0 = time.time()
-    lgb_cfg = cfg.params.train.lightgbm
+    lgb_cfg = cfg.train.lightgbm
     params = {
         "objective": "binary", "learning_rate": lgb_cfg.learning_rate, "num_leaves": lgb_cfg.num_leaves,
         "min_data_in_leaf": lgb_cfg.min_data_in_leaf, "feature_fraction": lgb_cfg.feature_fraction,
         "bagging_fraction": lgb_cfg.bagging_fraction, "bagging_freq": lgb_cfg.bagging_freq,
-        "metric": "auc", "verbose": -1, "seed": cfg.params.seed,
+        "metric": "auc", "verbose": -1, "seed": cfg.seed,
     }
     with mlflow.start_run(run_name=f"{key} [{variant}]"):
         mlflow.log_params({"model": key, "variant": variant, **params})
@@ -85,17 +84,17 @@ def stage_train_lightgbm(cfg: AppConfig) -> None:
     print({k: (round(v, 4) if isinstance(v, float) else v) for k, v in row.items() if k != "hp"})
 
 
-def _run_deep_model(cfg: AppConfig, name: str, hp: dict, variant: str) -> dict:
+def _run_deep_model(cfg: Config, name: str, hp: dict, variant: str) -> dict:
     init_tracking(cfg.paths.mlflow_tracking_uri)
     dataset, _train, fit_rows, val_rows, test_rows = load_dataset(cfg)
-    device = get_device()
+    device = torch.device(cfg.device)
     key = f"{name} [{variant}]"
     t0 = time.time()
     with mlflow.start_run(run_name=key):
         mlflow.log_params({"model": name, "variant": variant, **{k: hp[k] for k in HP_KEYS}})
         model, best, curve = train_model(
             MODELS[name], hp, dataset, fit_rows, val_rows, hp["max_epochs"], hp["eval_every_rows"], hp["patience"],
-            device, cfg.params.seed,
+            device, cfg.seed,
         )
         for step, auc in curve:
             mlflow.log_metric("val_auc", auc, step=step)
@@ -117,23 +116,23 @@ def _run_deep_model(cfg: AppConfig, name: str, hp: dict, variant: str) -> dict:
     save_result(_metrics_file(cfg, name, variant), row)
     print({k: (round(v, 4) if isinstance(v, float) else v) for k, v in row.items() if k != "hp"})
     del model
-    free_memory(device)
+    free_memory()
     return row
 
 
-def stage_train_deep(cfg: AppConfig, name: str) -> None:
-    hp = default_hp(cfg.params)
+def stage_train_deep(cfg: Config, name: str) -> None:
+    hp = default_hp(cfg)
     _run_deep_model(cfg, name, hp, "default")
 
 
-def stage_tune(cfg: AppConfig, name: str) -> None:
+def stage_tune(cfg: Config, name: str) -> None:
     init_tracking(cfg.paths.mlflow_tracking_uri)
     dataset, _train, fit_rows, val_rows, _test = load_dataset(cfg)
-    device, hp = get_device(), default_hp(cfg.params)
-    tcfg = cfg.params.tune
+    device, hp = torch.device(cfg.device), default_hp(cfg)
+    tcfg = cfg.tune
     optuna_db = cfg.paths.artifact_dir / "optuna.db"
     study = tune_model(
-        name, hp, HP_KEYS, dataset, fit_rows, val_rows, device, cfg.params.seed,
+        name, hp, HP_KEYS, dataset, fit_rows, val_rows, device, cfg.seed,
         storage=f"sqlite:///{optuna_db}", n_trials=tcfg.tune_trials, timeout_min=tcfg.tune_timeout_min,
         tune_rows=tcfg.tune_rows, tune_val_rows=tcfg.tune_val_rows,
     )
@@ -148,7 +147,7 @@ def stage_tune(cfg: AppConfig, name: str) -> None:
     _run_deep_model(cfg, name, tuned_hp, "tuned")
 
 
-def stage_evaluate(cfg: AppConfig) -> None:
+def stage_evaluate(cfg: Config) -> None:
     rows = load_results(cfg.paths.artifact_dir / "metrics")
     res = results_table(rows)
     out = cfg.paths.artifact_dir / "results.csv"
@@ -157,7 +156,7 @@ def stage_evaluate(cfg: AppConfig) -> None:
     print(res[display_cols].sort_values(["selected", "AUC"], ascending=False).round(4))
 
 
-def stage_combine(cfg: AppConfig) -> None:
+def stage_combine(cfg: Config) -> None:
     init_tracking(cfg.paths.mlflow_tracking_uri)
     dataset, _train, _fit, val_rows, test_rows = load_dataset(cfg)
     rows = load_results(cfg.paths.artifact_dir / "metrics")
@@ -174,7 +173,7 @@ def stage_combine(cfg: AppConfig) -> None:
         "LightGBM": (pg["logit_val"], pg["logit_test"]),
     }
     combos, sweep = evaluate_combinations(
-        P, dataset.y[val_rows], dataset.y[test_rows], cfg.params.serve.cascade_top_frac, metrics,
+        P, dataset.y[val_rows], dataset.y[test_rows], cfg.serve.cascade_top_frac, metrics,
     )
     combos.to_csv(cfg.paths.artifact_dir / "combinations.csv")
     with mlflow.start_run(run_name="combinations"):
@@ -183,7 +182,7 @@ def stage_combine(cfg: AppConfig) -> None:
     print(combos.round(4))
 
 
-def stage_register(cfg: AppConfig) -> None:
+def stage_register(cfg: Config) -> None:
     init_tracking(cfg.paths.mlflow_tracking_uri)
     rows = load_results(cfg.paths.artifact_dir / "metrics")
     res = results_table(rows)
@@ -195,7 +194,7 @@ def stage_register(cfg: AppConfig) -> None:
         return
 
     dataset, *_ = load_dataset(cfg)
-    hp = hp_from_params(default_hp(cfg.params), row["hp"], HP_KEYS)
+    hp = hp_from_params(default_hp(cfg), row["hp"], HP_KEYS)
     model = ThreeTower(hp, dataset.sizes, dataset.seq_len)
     weights_path = _model_file(cfg, "3-tower co-train", row["variant"], "pt")
     model.load_state_dict(torch.load(weights_path, map_location="cpu"))
@@ -205,7 +204,7 @@ def stage_register(cfg: AppConfig) -> None:
     )
 
 
-def stage_monitor(cfg: AppConfig) -> None:
+def stage_monitor(cfg: Config) -> None:
     from taobao_ctr.features.click_rates import TE_COLS
     from taobao_ctr.monitoring.report import (
         auc_per_day,
@@ -237,7 +236,7 @@ def stage_monitor(cfg: AppConfig) -> None:
     print(f"monitoring report written to {out_path}")
 
 
-def run(stage: str, cfg: AppConfig, name: str | None) -> None:
+def run(stage: str, cfg: Config, name: str | None) -> None:
     if stage == "train_lightgbm":
         stage_train_lightgbm(cfg)
     elif stage == "train_deep":

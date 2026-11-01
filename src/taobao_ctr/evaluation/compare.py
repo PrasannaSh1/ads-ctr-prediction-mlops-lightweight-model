@@ -1,8 +1,7 @@
-"""Results table assembly and variant selection (notebook section 11): for every model, the
+"""Results table assembly and variant selection: for every model, the
 variant (default or tuned) with the higher validation AUC is selected; its test-day metrics are
 reported. Each training stage writes its own `metrics/<key>.json` (a dvc metric); this module
-turns a list of those row dicts into the same results table the notebook built from its
-in-memory `RESULTS` dict.
+turns those rows into one results table.
 """
 from __future__ import annotations
 

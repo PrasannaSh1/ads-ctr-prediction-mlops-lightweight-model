@@ -1,4 +1,4 @@
-"""BCE loss (optionally weighted or focal) (notebook section 7). The 3-tower's combined loss
+"""BCE loss (optionally weighted or focal). The 3-tower's combined loss
 (BCE(rich) + cotrain_weight * BCE(two-tower head)) is assembled in trainer.train_model(), which
 is the only place that knows a model has a second ("cotrain_logit") head."""
 from __future__ import annotations

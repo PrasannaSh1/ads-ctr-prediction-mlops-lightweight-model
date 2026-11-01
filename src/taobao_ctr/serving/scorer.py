@@ -1,12 +1,10 @@
-"""TwoStageScorer: the online two-stage cascade from notebook section 12, applied to serving.
+"""TwoStageScorer: the two-stage cascade used for serving.
 
-How Pinterest serves the 3-tower (see evaluation/combine.py's docstring): the user tower runs
-once per request; the cheap co-trained two-tower score (user_vec . ad_vec + dot_bias) ranks
+The user tower runs once per request; the cheap co-trained two-tower score (user_vec . ad_vec + dot_bias) ranks
 every candidate from the ad cache; the cross tower + inter module (the full 3-tower) re-scores
 only the top `cascade_top_frac`, the rest keep their two-tower score.
 
-Two simplifications vs. true online serving, both deliberate and documented here rather than
-silently wrong:
+Two simplifications vs. true online serving:
 1. A user's "current" profile/history/click-rate are read from their most recent row in the
    offline dataset (`UserFeatureCache`) -- a real feature store would serve continuously
    updated values instead of a training-time snapshot.

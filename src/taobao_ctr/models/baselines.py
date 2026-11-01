@@ -1,4 +1,4 @@
-"""MLP, MLPSequence and Transformer (BST-style) models (notebook section 6).
+"""MLP, MLPSequence and Transformer (BST-style) models.
 
 Every model shares the uniform constructor signature `(hp, sizes, seq_len=None)` so
 training/tuning code can instantiate any registered model the same way; only Transformer

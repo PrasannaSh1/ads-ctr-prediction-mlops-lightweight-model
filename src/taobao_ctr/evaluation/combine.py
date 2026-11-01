@@ -1,11 +1,8 @@
 """Cascades (two-tower head -> 3-tower on the top cascade_top_frac, LightGBM -> 3-tower) and
-logit-space blending (notebook section 12).
+logit-space blending.
 
-How Pinterest serves the 3-tower (engineering blog, "Beyond Two Towers", Part 2): a cheap
-stage-1 score ranks all candidates, the 3-tower re-scores only the top K%, the rest keep the
-stage-1 score. Taobao has no candidate lists per request, so offline this shows how much
-accuracy the cheap first stage costs, rather than a real latency win (that is
-scripts/benchmark_latency.py's job, Phase 5).
+A cheap stage-1 score ranks all candidates, the 3-tower re-scores only the top K%, the rest keep
+the stage-1 score. Offline, this shows how much accuracy the cheap first stage costs.
 """
 from __future__ import annotations
 

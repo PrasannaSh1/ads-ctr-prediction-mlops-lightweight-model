@@ -1,6 +1,5 @@
-"""Forward-shape smoke tests for every registered model (notebook section 6): correct logit
-shape for a batch of B examples, and the 3-tower model must return both its rich head and its
-cheap co-trained two-tower head (PROMPT_taobao_ctr_mlops.md constraint 5)."""
+"""Forward-shape tests for every model: correct logit shape for a batch, and the 3-tower model
+returns both its rich head and its cheap co-trained two-tower head."""
 from __future__ import annotations
 
 import torch

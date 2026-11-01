@@ -14,13 +14,12 @@ vars:
 
 stages:
   prepare_impressions:
-    cmd: python -m taobao_ctr.pipeline prepare_impressions --profile synthetic
+    cmd: python -m taobao_ctr.pipeline prepare_impressions
     deps:
       - src/taobao_ctr/pipeline.py
       - src/taobao_ctr/pipeline_stages.py
       - src/taobao_ctr/data/impressions.py
       - src/taobao_ctr/data/download.py
-      - params.synthetic.yaml
     params:
       - data.kaggle_dataset
     outs:
@@ -28,12 +27,11 @@ stages:
       - artifacts/cache/sizes_partial.json
 
   build_history:
-    cmd: python -m taobao_ctr.pipeline build_history --profile synthetic
+    cmd: python -m taobao_ctr.pipeline build_history
     deps:
       - artifacts/cache/impressions.npz
       - artifacts/cache/sizes_partial.json
       - src/taobao_ctr/data/history.py
-      - params.synthetic.yaml
     params:
       - data.n_buckets
       - data.chunk_rows
@@ -45,7 +43,7 @@ stages:
       - artifacts/cache/ad_features.npz
 
   click_rates:
-    cmd: python -m taobao_ctr.pipeline click_rates --profile synthetic
+    cmd: python -m taobao_ctr.pipeline click_rates
     deps:
       - artifacts/cache/impressions.npz
       - artifacts/cache/ad_features.npz
@@ -58,7 +56,7 @@ stages:
       - artifacts/cache/TE.npy
 
   train_lightgbm:
-    cmd: python -m taobao_ctr.pipeline train_lightgbm --profile synthetic
+    cmd: python -m taobao_ctr.pipeline train_lightgbm
     deps:
       - artifacts/cache/TE.npy
       - artifacts/cache/split.npz
@@ -77,7 +75,7 @@ stages:
   train_deep:
     foreach: *models
     do:
-      cmd: python -m taobao_ctr.pipeline train_deep --profile synthetic --name "${item}"
+      cmd: python -m taobao_ctr.pipeline train_deep --name "${item}"
       deps:
         - artifacts/cache/TE.npy
         - artifacts/cache/split.npz
@@ -106,7 +104,7 @@ stages:
   tune:
     foreach: *tune_models
     do:
-      cmd: python -m taobao_ctr.pipeline tune --profile synthetic --name "${item}"
+      cmd: python -m taobao_ctr.pipeline tune --name "${item}"
       deps:
         - artifacts/cache/TE.npy
         - artifacts/cache/split.npz
@@ -119,7 +117,7 @@ stages:
             cache: false
 
   evaluate:
-    cmd: python -m taobao_ctr.pipeline evaluate --profile synthetic
+    cmd: python -m taobao_ctr.pipeline evaluate
     deps:
       - artifacts/metrics
       - src/taobao_ctr/evaluation/compare.py
@@ -127,7 +125,7 @@ stages:
       - artifacts/results.csv
 
   combine:
-    cmd: python -m taobao_ctr.pipeline combine --profile synthetic
+    cmd: python -m taobao_ctr.pipeline combine
     deps:
       - artifacts/results.csv
       - artifacts/preds
@@ -138,7 +136,7 @@ stages:
       - artifacts/combinations.csv
 
   register:
-    cmd: python -m taobao_ctr.pipeline register --profile synthetic
+    cmd: python -m taobao_ctr.pipeline register
     deps:
       - artifacts/results.csv
       - artifacts/models
@@ -147,7 +145,7 @@ stages:
       - artifacts/registered.json
 
   monitor:
-    cmd: python -m taobao_ctr.pipeline monitor --profile synthetic
+    cmd: python -m taobao_ctr.pipeline monitor
     deps:
       - artifacts/results.csv
       - artifacts/preds

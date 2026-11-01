@@ -1,12 +1,11 @@
-"""train_model(): best-checkpoint early stopping, predict(), metrics() (notebook section 7).
+"""train_model(): best-checkpoint early stopping, predict(), metrics().
 
 Checks validation AUC every ~eval_every_rows training rows; keeps the best checkpoint; stops
 after `patience` checks without improvement, up to `max_epochs`. `report(i, auc)`, if given,
-lets Optuna prune a trial (see training/tune.py) -- trainer.py itself has no Optuna dependency.
+lets Optuna prune a trial (see training/tune.py).
 """
 from __future__ import annotations
 
-import ctypes
 import gc
 import time
 
@@ -14,7 +13,7 @@ import numpy as np
 import torch
 from sklearn.metrics import average_precision_score, log_loss, roc_auc_score
 
-from taobao_ctr.config import Params
+from taobao_ctr.config import Config
 from taobao_ctr.data.dataset import Dataset
 from taobao_ctr.training.batches import batches
 from taobao_ctr.training.losses import make_loss
@@ -23,30 +22,20 @@ from taobao_ctr.training.optim import make_optimizer
 HP_KEYS = ["lr", "batch_size", "dropout", "optimizer", "weight_decay", "loss", "gamma", "pos_weight", "cotrain_weight"]
 
 
-def get_device() -> torch.device:
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
 def set_seed(seed: int) -> None:
     np.random.seed(seed)
     torch.manual_seed(seed)
 
 
-def free_memory(device: torch.device | None = None) -> None:
+def free_memory() -> None:
     """Give unused RAM and GPU memory back."""
     gc.collect()
-    try:
-        ctypes.CDLL("libc.so.6").malloc_trim(0)  # only available on glibc Linux (Colab/Kaggle)
-    except OSError:
-        pass
-    if device is not None and device.type == "cuda":
-        torch.cuda.empty_cache()
+    torch.cuda.empty_cache()
 
 
-def default_hp(params: Params) -> dict:
-    """The DEFAULT_HP dict (notebook: `{k: CFG[k] for k in [...]}`), from params.yaml's `model`
-    and `train` groups."""
-    m, t = params.model, params.train
+def default_hp(cfg: Config) -> dict:
+    """Default model + training settings from params.yaml."""
+    m, t = cfg.model, cfg.train
     return {
         "emb_dim": m.emb_dim, "tower_dim": m.tower_dim, "n_heads": m.n_heads, "n_query_tokens": m.n_query_tokens,
         "max_epochs": t.max_epochs, "eval_every_rows": t.eval_every_rows, "patience": t.patience,

@@ -1,4 +1,4 @@
-"""Optimizer construction from hp (notebook section 7)."""
+"""Optimizer construction from hp."""
 from __future__ import annotations
 
 import torch

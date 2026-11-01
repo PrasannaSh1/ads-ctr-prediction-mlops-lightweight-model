@@ -1,15 +1,13 @@
-"""Resumable per-model Optuna hyper-parameter search (notebook section 10).
+"""Resumable per-model Optuna hyper-parameter search.
 
 Trials train on a random subset of fit_rows for 1 epoch and are scored on a subset of val_rows
 (the test day is never touched during tuning). Trial 0 is always the current default setting;
 the TPE sampler proposes the rest and a median pruner stops clearly-worse trials early.
-`pos_weight` is capped at 3 -- PROMPT_taobao_ctr_mlops.md constraint 6 notes an uncapped
-pos_weight of 9.4 broke the 3-tower in development: good on validation, much worse on test.
+`pos_weight` is capped at 3: an uncapped 9.4 broke the 3-tower in development (good on
+validation, much worse on test).
 
-This module has no MLflow dependency: it is pure search mechanics. The caller (Phase 4's
-orchestration) decides whether to log trials and, via `should_adopt_tuned`, whether a refit of
-the best trial actually replaces the default -- only if its validation AUC is higher
-(constraint 6: "replaces the default only if its refit wins on validation").
+A tuned setting replaces the default only if the best trial is not the default
+(`should_adopt_tuned`).
 """
 from __future__ import annotations
 
@@ -84,7 +82,7 @@ def tune(
             MODELS[name], hp, data, tune_fit, tune_val, 1, eval_rows, 99, device, seed, report, verbose=False,
         )
         del model
-        free_memory(device)
+        free_memory()
         return best["auc"]
 
     study.optimize(objective, n_trials=n_trials - len(finished), timeout=timeout_min * 60, catch=(RuntimeError,))

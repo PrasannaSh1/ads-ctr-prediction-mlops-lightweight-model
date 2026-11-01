@@ -1,4 +1,4 @@
-"""LightGBM-only interaction-count features (notebook section 8): how often the user's recent
+"""LightGBM-only interaction-count features: how often the user's recent
 history touched the ad's category/brand, the length of that history, plus a handful of small
 categoricals -- concatenated after the 8 click-rate features to make LightGBM's feature matrix.
 """

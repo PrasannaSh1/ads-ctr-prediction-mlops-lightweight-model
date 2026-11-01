@@ -1,4 +1,4 @@
-"""Small cross-cutting helpers used by more than one package (notebook section 2)."""
+"""Small cross-cutting helpers used by more than one package."""
 import re
 
 

@@ -1,5 +1,5 @@
 """MLflow tracking URI setup and idempotent registration of the selected 3-tower model as
-`taobao-ctr-3tower` with alias `champion` (notebook sections 3 and 13). A serving job then
+`taobao-ctr-3tower` with alias `champion`. A serving job then
 loads "the current champion" without knowing which run produced it:
 `mlflow.pytorch.load_model("models:/taobao-ctr-3tower@champion")`.
 
@@ -38,7 +38,7 @@ def register_champion(
 ) -> None:
     """Logs the model, registers a new version, and points `alias` at it. If the registry step
     fails (e.g. no tracking server configured for model registration), the run still logs the
-    raw weights file as an artifact so nothing is lost -- same fallback as the notebook."""
+    raw weights file as an artifact so nothing is lost."""
     with mlflow.start_run(run_name=f"register {model_name}"):
         mlflow.log_params({"source": key, **hp})
         mlflow.log_metrics({

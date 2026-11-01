@@ -1,4 +1,4 @@
-"""Time-ordered (CatBoost-style) click-rate encodings, ported verbatim from notebook section 4.4.
+"""Time-ordered (CatBoost-style) click-rate encodings.
 
 Smoothed past click rate of the user, ad, campaign, advertiser, brand, category and
 user x category, plus log price.
@@ -12,7 +12,7 @@ Do NOT switch to out-of-fold encoding: leaving a row's fold out makes its encode
 become negatively related to clicks, while the test day — encoded from all training rows — has
 the normal positive relation. Models learn the wrong direction and validation, encoded the same
 way as training, does not notice. Development runs showed a validation-test AUC gap of about
-0.025-0.027 partly for this reason. See PROMPT_taobao_ctr_mlops.md, constraint 3.
+0.025-0.027 partly for this reason.
 """
 from __future__ import annotations
 

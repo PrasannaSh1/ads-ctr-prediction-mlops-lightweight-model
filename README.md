@@ -1,21 +1,71 @@
-# taobao-ctr-mlops
+# Taobao Ad CTR Prediction (3-tower model + MLOps)
 
-Click-through-rate (pCTR) prediction on Alibaba's Taobao display-ads dataset, ported from a
-tested research notebook into a production-style MLOps project: LightGBM baseline plus five deep
-models, including a 3-tower engagement co-train model, served behind a two-stage FastAPI scorer.
+Predicts the probability that a user clicks a display ad (pCTR) on Alibaba's Taobao ads dataset
+(26.6M impressions, 1.14M users, 723M-row behaviour log). Six models are trained and compared;
+the 3-tower co-train model is registered in MLflow and served by a FastAPI two-stage scorer.
 
-**Status: work in progress, built in phases.** This README is a placeholder until Phase 8, when
-the full write-up (results, architecture, how to run locally / Kaggle / Docker) lands. See
-`docs/mlops_guide.md` (Phase 8) for a beginner-friendly tour of every MLOps piece once it exists.
+## Models
 
-## Phase 1 (current): project scaffold
+| Model | Test AUC |
+| --- | --- |
+| LightGBM | 0.6532 |
+| Transformer (BST) | 0.6440 |
+| 3-tower co-train | 0.6434 |
+| MLP | 0.6420 |
+| MLP + sequence | 0.6416 |
+| Two-tower | 0.6388 |
 
-- `pyproject.toml` — the `taobao_ctr` package, pinned dependencies, ruff + pytest config.
-- `params.yaml` / `params.synthetic.yaml` — every setting from the notebook's `CFG` dict, grouped,
-  with a tiny "synthetic" profile for local runs and CI.
-- `src/taobao_ctr/config.py` — loads and validates params.yaml (pydantic), detects the platform
-  (Kaggle / Colab / local), and resolves data/artifact paths from the environment.
-- `src/taobao_ctr/**` — package skeleton; each module has a docstring saying what it will hold and
-  which phase fills it in.
+The 3-tower model is deployed: its ad side can be cached, and its cheap two-tower head ranks all
+candidates before the full model re-scores the top 40%.
 
-Nothing here runs an actual pipeline stage yet — that starts in Phase 2.
+## Project layout
+
+```
+params.yaml            all settings (paths, device, model, training, tuning)
+dvc.yaml               the pipeline: data -> features -> training -> tuning -> evaluation -> registry
+src/taobao_ctr/
+  data/                load + encode impressions, behaviour-history store
+  features/            time-ordered click-rate features, LightGBM features
+  models/              MLP, MLP + sequence, Transformer, Two-tower, 3-tower
+  training/            training loop, LightGBM, Optuna tuning
+  evaluation/          results table, cascades and blends
+  tracking/            MLflow model registry
+  monitoring/          calibration, AUC per day, PSI drift report
+  serving/             ad cache, two-stage scorer, FastAPI app
+tests/                 unit tests
+notebooks/             the original research notebook
+```
+
+## Run it (GPU machine)
+
+1. Install (Python 3.13):
+   ```bash
+   pip install -e ".[dev]"
+   ```
+2. Set up Kaggle credentials (`~/.kaggle/kaggle.json`). The dataset
+   (`zerotrustai/taobao-ad-display-click`, ~24 GB) downloads into `data/` on the first run.
+3. Check the paths and `device: "cuda"` in `params.yaml`.
+4. Run the whole pipeline:
+   ```bash
+   dvc repro
+   dvc metrics show
+   ```
+5. Browse runs: `mlflow ui --backend-store-uri sqlite:///mlflow.db`
+6. Serve the model:
+   ```bash
+   make api                    # or: docker compose up --build
+   curl -X POST http://localhost:8000/score -H "Content-Type: application/json" \
+        -d '{"user_id": 1701, "ad_ids": [649, 47, 659]}'
+   ```
+
+## Pipeline stages
+
+`prepare_impressions` -> `build_history` -> `click_rates` -> `train_lightgbm` + `train_deep` (5 models)
+-> `tune` (Optuna, 5 models) -> `evaluate` -> `combine` -> `register` -> `monitor`
+
+Each stage is `python -m taobao_ctr.pipeline <stage>`; DVC reruns only what changed.
+
+## Tests and CI
+
+`pytest` runs model shape tests and a label-leakage test for the click-rate features.
+GitHub Actions runs ruff + pytest on every push, and pushes a Docker image to GHCR on version tags.

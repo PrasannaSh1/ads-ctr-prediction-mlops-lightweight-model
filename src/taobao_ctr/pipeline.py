@@ -1,10 +1,7 @@
-"""CLI entry point for every dvc.yaml stage: `python -m taobao_ctr.pipeline <stage> [--profile P] [--name NAME]`.
+"""CLI entry point for every dvc.yaml stage: `python -m taobao_ctr.pipeline <stage> [--name NAME]`.
 
 Each stage reads its inputs from `artifacts/cache`, computes, and writes its outputs back there
-(plus `metrics/*.json` for anything dvc should track as a metric). DVC decides whether a stage
-needs to rerun based on file hashes -- these functions always just (re)compute, they don't do
-their own "already done" checks (Phase 2's stream_behaviour()/build_history() still do, for
-resumability *within* a stage that dvc treats as a single unit).
+(plus `metrics/*.json` for dvc to track). DVC decides which stages need to rerun.
 """
 from __future__ import annotations
 
@@ -14,7 +11,7 @@ from pathlib import Path
 
 import numpy as np
 
-from taobao_ctr.config import AppConfig, load_config
+from taobao_ctr.config import Config, load_config
 from taobao_ctr.data.dataset import Dataset
 from taobao_ctr.data.history import (
     build_history,
@@ -40,7 +37,7 @@ STAGES = [
     "monitor",
 ]
 
-def _cache(cfg: AppConfig) -> Path:
+def _cache(cfg: Config) -> Path:
     return cfg.paths.artifact_dir / "cache"
 
 
@@ -48,11 +45,11 @@ def _cache(cfg: AppConfig) -> Path:
 # Stage 1: prepare_impressions
 # ---------------------------------------------------------------------------
 
-def stage_prepare_impressions(cfg: AppConfig) -> None:
+def stage_prepare_impressions(cfg: Config) -> None:
     cache = _cache(cfg)
     cache.mkdir(parents=True, exist_ok=True)
     imp = load_impressions(
-        data_dir=cfg.paths.data_dir, kaggle_dataset=cfg.params.data.kaggle_dataset, platform=cfg.platform,
+        data_dir=cfg.paths.data_dir, kaggle_dataset=cfg.data.kaggle_dataset,
     )
     arrays = {
         "ts": imp["ts"], "y": imp["y"], "u": imp["u"], "user_ids": imp["user_ids"], "price": imp["price"],
@@ -78,21 +75,21 @@ def _load_impressions_cache(cache: Path) -> dict:
 # Stage 2: build_history
 # ---------------------------------------------------------------------------
 
-def stage_build_history(cfg: AppConfig) -> None:
+def stage_build_history(cfg: Config) -> None:
     cache = _cache(cfg)
     imp = _load_impressions_cache(cache)
     ad_cate = np.nan_to_num(imp["ad_cate"], nan=-1).astype(np.int64)
     ad_brand = np.nan_to_num(imp["ad_brand"], nan=-1).astype(np.int64)
     seen = stream_behaviour(
-        imp, data_dir=cfg.paths.data_dir, kaggle_dataset=cfg.params.data.kaggle_dataset, platform=cfg.platform,
-        n_buckets=cfg.params.data.n_buckets, chunk_rows=cfg.params.data.chunk_rows,
+        imp, data_dir=cfg.paths.data_dir, kaggle_dataset=cfg.data.kaggle_dataset,
+        n_buckets=cfg.data.n_buckets, chunk_rows=cfg.data.chunk_rows,
     )
     cate_vocab, brand_vocab = build_vocab(ad_cate, ad_brand, seen)
     save_vocab(cache / "vocab.npz", cate_vocab, brand_vocab)
 
     first, end, BC, BB, BT = build_history(
         imp, cate_vocab, brand_vocab, data_dir=cfg.paths.data_dir,
-        n_buckets=cfg.params.data.n_buckets, seq_len=cfg.params.data.seq_len,
+        n_buckets=cfg.data.n_buckets, seq_len=cfg.data.seq_len,
     )
     save_checkpoint(cache / "history.npz", first, end, BC, BB, BT)
 
@@ -111,7 +108,7 @@ def stage_build_history(cfg: AppConfig) -> None:
 # Stage 3: click_rates
 # ---------------------------------------------------------------------------
 
-def stage_click_rates(cfg: AppConfig) -> None:
+def stage_click_rates(cfg: Config) -> None:
     cache = _cache(cfg)
     imp = _load_impressions_cache(cache)
     ad = np.load(cache / "ad_features.npz")
@@ -121,12 +118,12 @@ def stage_click_rates(cfg: AppConfig) -> None:
     train_rows, fit_rows, val_rows, test_rows = split(imp["ts"])
     np.savez(cache / "split.npz", train_rows=train_rows, fit_rows=fit_rows, val_rows=val_rows, test_rows=test_rows)
 
-    TE = click_rate_features(imp, X, fit_rows, val_rows, test_rows, sizes["cate"], te_alpha=cfg.params.features.te_alpha)
+    TE = click_rate_features(imp, X, fit_rows, val_rows, test_rows, sizes["cate"], te_alpha=cfg.features.te_alpha)
     np.save(cache / "TE.npy", TE)
     print(f"click_rates: fit {len(fit_rows):,} | val {len(val_rows):,} | test {len(test_rows):,}")
 
 
-def load_dataset(cfg: AppConfig) -> tuple[Dataset, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def load_dataset(cfg: Config) -> tuple[Dataset, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Reassembles the Dataset + row splits from the cache files written by the 3 stages above."""
     cache = _cache(cfg)
     imp = _load_impressions_cache(cache)
@@ -138,7 +135,7 @@ def load_dataset(cfg: AppConfig) -> tuple[Dataset, np.ndarray, np.ndarray, np.nd
     sp = np.load(cache / "split.npz")
     dataset = Dataset(
         X=X, y=imp["y"], ts=imp["ts"], u=imp["u"], user_ids=imp["user_ids"], TE=TE,
-        first=first, end=end, BC=BC, BB=BB, BT=BT, sizes=sizes, seq_len=cfg.params.data.seq_len,
+        first=first, end=end, BC=BC, BB=BB, BT=BT, sizes=sizes, seq_len=cfg.data.seq_len,
     )
     return dataset, sp["train_rows"], sp["fit_rows"], sp["val_rows"], sp["test_rows"]
 
@@ -146,10 +143,9 @@ def load_dataset(cfg: AppConfig) -> tuple[Dataset, np.ndarray, np.ndarray, np.nd
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("stage", choices=STAGES)
-    parser.add_argument("--profile", choices=["full", "synthetic"], default=None)
     parser.add_argument("--name", default=None, help="model name, for train_deep/tune stages")
     args = parser.parse_args()
-    cfg = load_config(args.profile)
+    cfg = load_config()
     cfg.paths.ensure()
 
     from taobao_ctr import pipeline_stages  # local import: keeps heavy deps (torch/lightgbm/mlflow) lazy

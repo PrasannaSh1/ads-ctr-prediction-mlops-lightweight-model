@@ -1,5 +1,4 @@
-"""Precompute ad-tower vectors and cross-tower query projections for every ad once, offline
-(notebook section 6, AdTower docstring: "can be computed offline and cached per ad"). The
+"""Precompute ad-tower vectors and cross-tower query projections for every ad once, offline. The
 scorer then only runs the user tower per request and does a cheap dot product / attention over
 these cached vectors instead of recomputing the ad side for every request.
 

@@ -1,5 +1,5 @@
 """MODELS: friendly name -> model class, used by training/tuning/evaluation to iterate over all
-5 deep models by name (notebook section 6/9)."""
+5 deep models by name."""
 from __future__ import annotations
 
 from taobao_ctr.models.baselines import MLP, MLPSequence, Transformer

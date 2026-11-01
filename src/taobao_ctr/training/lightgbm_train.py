@@ -1,4 +1,4 @@
-"""FeatureSequence, LightGBM training + predict (notebook section 8). Rows are fed to LightGBM
+"""FeatureSequence, LightGBM training + predict. Rows are fed to LightGBM
 through `lgb.Sequence` in batches, so the full feature matrix never sits in RAM at once."""
 from __future__ import annotations
 

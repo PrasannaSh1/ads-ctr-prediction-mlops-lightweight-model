@@ -1,8 +1,6 @@
-"""UserTower, AdTower, TwoTower, CrossTower and ThreeTower: the Pinterest-style co-train model
-(notebook section 6).
+"""UserTower, AdTower, TwoTower, CrossTower and ThreeTower: the 3-tower co-train model.
 
-TE_USER/TE_AD/TE_CROSS implement PROMPT_taobao_ctr_mlops.md constraint 4: user-only click rates
-may enter the user tower, ad-only rates the ad tower, and the user x category rate only where
+Click-rate placement (TE_USER/TE_AD/TE_CROSS): user-only click rates may enter the user tower, ad-only rates the ad tower, and the user x category rate only where
 user and ad meet (the cross tower / inter module) -- it would break ad-tower caching otherwise.
 Indices follow features.click_rates.TE_COLS ordering.
 """
@@ -29,7 +27,7 @@ class UserTower(nn.Module):
 
 
 class AdTower(nn.Module):
-    """Ad side only (Pinterest's 'Pin tower'): can be computed offline and cached per ad."""
+    """Ad side only: can be computed offline and cached per ad."""
 
     def __init__(self, emb: Embeddings, hp: dict):
         super().__init__()

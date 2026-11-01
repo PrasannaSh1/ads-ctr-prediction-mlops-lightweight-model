@@ -1,5 +1,5 @@
 """make_batch() and the background-thread batches() generator that overlaps history gathering
-(CPU) with model training (GPU) (notebook section 5)."""
+(CPU) with model training (GPU)."""
 from __future__ import annotations
 
 import queue

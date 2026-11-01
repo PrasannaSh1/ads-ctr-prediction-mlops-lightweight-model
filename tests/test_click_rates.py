@@ -1,7 +1,5 @@
-"""Time-ordered click-rate encodings (notebook section 4.4, constraint 3 in
-PROMPT_taobao_ctr_mlops.md): a fit row's encoding must never depend on its own label, and
-validation must be encoded exactly like the test day — frozen at the end of the fit period,
-while test additionally sees the validation period."""
+"""Time-ordered click-rate encodings: a fit row's encoding must never depend on its own label,
+and validation is frozen at the end of the fit period while test also sees the validation period."""
 from __future__ import annotations
 
 import numpy as np

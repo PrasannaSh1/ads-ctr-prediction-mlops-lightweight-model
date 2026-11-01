@@ -1,7 +1,5 @@
 """Shared building blocks for every deep model: a plain MLP and the embedding tables for ID
-features and behaviour history (notebook section 6). All deep models share the same embedding
-tables and click-rate features (see PROMPT_taobao_ctr_mlops.md constraint 4 for how the
-click-rate columns are split by side, enforced in models/towers.py)."""
+features and behaviour history. All deep models share the same embedding tables."""
 from __future__ import annotations
 
 import torch

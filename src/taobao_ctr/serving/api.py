@@ -1,12 +1,6 @@
 """FastAPI app: /health, /score (user + candidate ad ids -> pCTR), /model-info.
 
-`create_app(scorer, ...)` is the pure, test-friendly factory (dependency injection: pass in an
-already-built TwoStageScorer). `create_production_app()` does the real wiring -- load params,
-load the champion 3-tower from MLflow (or a fresh model if the registry step never ran), build
-the ad/user caches -- and is meant to be run via uvicorn's `--factory` flag so none of that
-heavy work happens at import time:
-
-    uvicorn taobao_ctr.serving.api:create_production_app --factory --host 0.0.0.0 --port 8000
+Run with:  uvicorn taobao_ctr.serving.api:create_production_app --factory --host 0.0.0.0 --port 8000
 """
 from __future__ import annotations
 
@@ -42,25 +36,32 @@ def create_app(scorer: TwoStageScorer, model_name: str = "taobao-ctr-3tower", al
 
 
 def create_production_app() -> FastAPI:
+    import json
+
     import mlflow.pytorch
+    import torch
 
     from taobao_ctr.config import load_config
     from taobao_ctr.models.towers import ThreeTower
     from taobao_ctr.pipeline import load_dataset
     from taobao_ctr.serving.ad_cache import build_ad_cache
     from taobao_ctr.serving.scorer import UserFeatureCache
-    from taobao_ctr.training.trainer import default_hp, get_device
+    from taobao_ctr.training.trainer import default_hp
 
     cfg = load_config()
     dataset, *_ = load_dataset(cfg)
-    device = get_device()
+    device = torch.device(cfg.device)
 
     mlflow.set_tracking_uri(cfg.paths.mlflow_tracking_uri)
     try:
         model = mlflow.pytorch.load_model("models:/taobao-ctr-3tower@champion", map_location=device)
-    except Exception:  # registry step never ran (e.g. first local demo) -- serve an untrained model
-        model = ThreeTower(default_hp(cfg.params), dataset.sizes, dataset.seq_len)
+    except Exception:  # registry not reachable: load the champion weights saved by the register stage
+        key = json.loads((cfg.paths.artifact_dir / "registered.json").read_text())["source"]
+        name, variant = key.rsplit(" [", 1)
+        weights_path = cfg.paths.artifact_dir / "models" / name / f"{variant.rstrip(']')}.pt"
+        model = ThreeTower(default_hp(cfg), dataset.sizes, dataset.seq_len)
+        model.load_state_dict(torch.load(weights_path, map_location=device))
 
     ad_cache = build_ad_cache(model, dataset, device)
-    scorer = TwoStageScorer(model, ad_cache, UserFeatureCache(dataset), device, cfg.params.serve.cascade_top_frac)
+    scorer = TwoStageScorer(model, ad_cache, UserFeatureCache(dataset), device, cfg.serve.cascade_top_frac)
     return create_app(scorer)
