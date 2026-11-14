@@ -1,45 +1,61 @@
-"""make_batch() and the background-thread batches() generator that overlaps history gathering
-(CPU) with model training (GPU)."""
-from __future__ import annotations
+"""Turns rows of the dataset into batches of tensors for the models.
 
+The batches are built in a background thread, so the CPU prepares the next batch while
+the GPU is still training on the current one.
+"""
 import queue
 import threading
 
 import numpy as np
 import torch
 
-from taobao_ctr.data.dataset import Dataset
-from taobao_ctr.data.history import history
+from taobao_ctr.data.history import get_history
 from taobao_ctr.data.impressions import ID_COLS
 
 
-def make_batch(data: Dataset, rows: np.ndarray) -> dict:
-    b = {c: torch.from_numpy(data.X[c][rows].astype(np.int64)) for c in ID_COLS}
-    hc, hb, ht = history(rows, first=data.first, end=data.end, BC=data.BC, BB=data.BB, BT=data.BT, seq_len=data.seq_len)
-    b["hist_cate"], b["hist_brand"], b["hist_btag"] = (torch.from_numpy(h.astype(np.int64)) for h in (hc, hb, ht))
-    b["te"] = torch.from_numpy(data.TE[rows])
-    b["label"] = torch.from_numpy(data.y[rows])
-    return b
+def make_batch(data, rows):
+    """One batch: a dict of tensors for the given rows."""
+    batch = {}
+    for col in ID_COLS:
+        batch[col] = torch.from_numpy(data.X[col][rows].astype(np.int64))
+    hist_cate, hist_brand, hist_btag = get_history(data, rows)
+    batch["hist_cate"] = torch.from_numpy(hist_cate.astype(np.int64))
+    batch["hist_brand"] = torch.from_numpy(hist_brand.astype(np.int64))
+    batch["hist_btag"] = torch.from_numpy(hist_btag.astype(np.int64))
+    batch["te"] = torch.from_numpy(data.TE[rows])
+    batch["label"] = torch.from_numpy(data.y[rows])
+    return batch
 
 
-def batches(data: Dataset, rows: np.ndarray, batch_size: int, device: torch.device, shuffle: bool = False):
-    """Yields batches on `device`, built in a background thread."""
+def fill_queue(data, rows, batch_size, batch_queue, stop_event):
+    """Runs in the background thread: builds batches and puts them in the queue."""
+    for start in range(0, len(rows), batch_size):
+        if stop_event.is_set():
+            return
+        batch = make_batch(data, rows[start:start + batch_size])
+        batch_queue.put(batch)
+    batch_queue.put(None)  # None means "no more batches"
+
+
+def batches(data, rows, batch_size, device, shuffle=False):
+    """Yields batches on the device, one after another."""
     if shuffle:
         rows = np.random.permutation(rows)
-    q, stop = queue.Queue(maxsize=6), threading.Event()
-
-    def producer():
-        for s in range(0, len(rows), batch_size):
-            if stop.is_set():
-                return
-            q.put(make_batch(data, rows[s:s + batch_size]))
-        q.put(None)
-
-    threading.Thread(target=producer, daemon=True).start()
+    batch_queue = queue.Queue(maxsize=6)  # at most 6 batches wait in memory
+    stop_event = threading.Event()
+    worker = threading.Thread(target=fill_queue, args=(data, rows, batch_size, batch_queue, stop_event), daemon=True)
+    worker.start()
     try:
-        while (b := q.get()) is not None:
-            yield {k: v.to(device, non_blocking=True) for k, v in b.items()}
-    finally:  # early stop: let the producer finish
-        stop.set()
-        while not q.empty():
-            q.get_nowait()
+        while True:
+            batch = batch_queue.get()
+            if batch is None:
+                break
+            batch_on_device = {}
+            for key, value in batch.items():
+                batch_on_device[key] = value.to(device, non_blocking=True)
+            yield batch_on_device
+    finally:
+        # If training stopped early, tell the worker to stop and empty the queue
+        stop_event.set()
+        while not batch_queue.empty():
+            batch_queue.get_nowait()

@@ -1,7 +1,4 @@
-"""MODELS: friendly name -> model class, used by training/tuning/evaluation to iterate over all
-5 deep models by name."""
-from __future__ import annotations
-
+"""MODELS: the friendly name of each deep model -> its class."""
 from taobao_ctr.models.baselines import MLP, MLPSequence, Transformer
 from taobao_ctr.models.towers import ThreeTower, TwoTower
 

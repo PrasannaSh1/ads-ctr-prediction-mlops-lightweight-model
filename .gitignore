@@ -7,9 +7,10 @@ dist/
 .venv/
 venv/
 
-# Data, models and tracking stores (created by the pipeline, never committed)
-data/
-artifacts/
+# Data, models and tracking stores (created by the pipeline, never committed).
+# The leading / means "only in the project root", so src/taobao_ctr/data/ is NOT ignored.
+/data/
+/artifacts/
 mlruns/
 mlflow.db
 reports/

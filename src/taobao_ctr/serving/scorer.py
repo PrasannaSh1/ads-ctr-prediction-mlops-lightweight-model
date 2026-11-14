@@ -1,101 +1,117 @@
-"""TwoStageScorer: the two-stage cascade used for serving.
+"""The two-stage scorer used for serving.
 
-The user tower runs once per request; the cheap co-trained two-tower score (user_vec . ad_vec + dot_bias) ranks
-every candidate from the ad cache; the cross tower + inter module (the full 3-tower) re-scores
-only the top `cascade_top_frac`, the rest keep their two-tower score.
+For one request (one user, many candidate ads):
+  1. run the user tower once,
+  2. stage 1: score every candidate with the cheap dot product (user vector . cached ad vector),
+  3. stage 2: re-score only the top cascade_top_frac with the full 3-tower (cross tower + inter module),
+  4. the rest keep their stage-1 score.
 
-Two simplifications vs. true online serving:
-1. A user's "current" profile/history/click-rate are read from their most recent row in the
-   offline dataset (`UserFeatureCache`) -- a real feature store would serve continuously
-   updated values instead of a training-time snapshot.
-2. The user x category click-rate (TE_CROSS) needs a (user, ad-category) join that this
-   serving path does not precompute; it always uses the standardized prior (0.0) -- the same
-   fallback features/click_rates.py uses for a key it has never seen.
+Two simplifications compared to real online serving:
+  1. A user's profile, history and click rate come from their most recent row in the dataset
+     (UserFeatureCache). A real system would read live values from a feature store.
+  2. The user x category click rate is not available at serving time, so it is set to 0.0,
+     which is the standardised prior (the same fallback used for an unseen key in training).
 """
-from __future__ import annotations
-
 import numpy as np
 import torch
 
-from taobao_ctr.data.dataset import Dataset
-from taobao_ctr.data.history import history
+from taobao_ctr.data.history import get_history
 from taobao_ctr.models.layers import USER_FEATS
-from taobao_ctr.models.towers import ThreeTower
 
 
 class UserFeatureCache:
-    """Per-user profile/history/click-rate model inputs, from that user's most recent row."""
+    """Model inputs for a user, taken from that user's most recent impression."""
 
-    def __init__(self, dataset: Dataset):
+    def __init__(self, dataset):
         self.dataset = dataset
+        # user number -> row of their most recent impression
         order = np.argsort(dataset.ts, kind="stable")
-        last_row: dict[int, int] = {}
-        for idx in order:  # later rows overwrite earlier ones -> ends with the most recent per user
+        last_row = {}
+        for idx in order:  # later rows overwrite earlier ones
             last_row[int(dataset.u[idx])] = int(idx)
-        self._last_row_by_u_index = last_row
-        self._u_index_by_raw_id = {int(raw): i + 1 for i, raw in enumerate(dataset.user_ids)}
+        self.last_row_by_user_number = last_row
+        # raw user id -> user number (1..U)
+        self.user_number_by_raw_id = {}
+        for i, raw_id in enumerate(dataset.user_ids):
+            self.user_number_by_raw_id[int(raw_id)] = i + 1
 
-    def row_for(self, raw_user_id: int) -> int:
-        u_index = self._u_index_by_raw_id.get(int(raw_user_id))
-        if u_index is None or u_index not in self._last_row_by_u_index:
+    def row_for(self, raw_user_id):
+        user_number = self.user_number_by_raw_id.get(int(raw_user_id))
+        if user_number is None or user_number not in self.last_row_by_user_number:
             raise KeyError(f"user {raw_user_id} has no known impression history")
-        return self._last_row_by_u_index[u_index]
+        return self.last_row_by_user_number[user_number]
 
-    def batch_for(self, raw_user_id: int) -> dict:
+    def batch_for(self, raw_user_id):
+        """A batch of size 1 with this user's inputs."""
         rows = np.array([self.row_for(raw_user_id)])
         d = self.dataset
-        b = {key: torch.from_numpy(d.X[key][rows].astype(np.int64)) for key, _ in USER_FEATS}
-        hc, hb, ht = history(rows, first=d.first, end=d.end, BC=d.BC, BB=d.BB, BT=d.BT, seq_len=d.seq_len)
-        b["hist_cate"] = torch.from_numpy(hc.astype(np.int64))
-        b["hist_brand"] = torch.from_numpy(hb.astype(np.int64))
-        b["hist_btag"] = torch.from_numpy(ht.astype(np.int64))
-        b["te"] = torch.from_numpy(d.TE[rows])
-        return b
+        batch = {}
+        for batch_key, _table_name in USER_FEATS:
+            batch[batch_key] = torch.from_numpy(d.X[batch_key][rows].astype(np.int64))
+        hist_cate, hist_brand, hist_btag = get_history(d, rows)
+        batch["hist_cate"] = torch.from_numpy(hist_cate.astype(np.int64))
+        batch["hist_brand"] = torch.from_numpy(hist_brand.astype(np.int64))
+        batch["hist_btag"] = torch.from_numpy(hist_btag.astype(np.int64))
+        batch["te"] = torch.from_numpy(d.TE[rows])
+        return batch
 
 
 class TwoStageScorer:
-    def __init__(
-        self, model: ThreeTower, ad_cache: dict, user_cache: UserFeatureCache,
-        device: torch.device, cascade_top_frac: float, stage2_chunk_size: int = 4096,
-    ):
+    def __init__(self, model, ad_cache, user_cache, device, cascade_top_frac, stage2_chunk_size=4096):
         self.model = model.to(device).eval()
-        self.ad_cache, self.user_cache, self.device = ad_cache, user_cache, device
+        self.ad_cache = ad_cache
+        self.user_cache = user_cache
+        self.device = device
         self.cascade_top_frac = cascade_top_frac
-        # The cross tower's attention allocates O(chunk x seq_len x tower_dim) per call; an
-        # unbounded batch (e.g. 200K candidates) can exhaust RAM in one shot, so stage 2 always
-        # runs in chunks -- the same thing a real server would have to do.
+        # Stage 2 runs in chunks: the cross tower's attention needs a lot of memory per candidate,
+        # so scoring 200K candidates in one go could run out of RAM.
         self.stage2_chunk_size = stage2_chunk_size
 
-    @torch.no_grad()
-    def score(self, raw_user_id: int, candidate_ad_ids: np.ndarray) -> np.ndarray:
-        """pCTR per candidate ad id, in the same order as `candidate_ad_ids`."""
-        candidate_ad_ids = np.asarray(candidate_ad_ids)
-        ad_ids = self.ad_cache["ad_ids"]
-        idx = np.clip(np.searchsorted(ad_ids, candidate_ad_ids), 0, len(ad_ids) - 1)
-        found = ad_ids[idx] == candidate_ad_ids
-        if not found.all():
-            raise KeyError(f"{int((~found).sum())} candidate ad id(s) not in the ad cache")
+    def score(self, raw_user_id, candidate_ad_ids):
+        """Predicted CTR for every candidate ad, in the same order as candidate_ad_ids."""
+        with torch.no_grad():
+            candidate_ad_ids = np.asarray(candidate_ad_ids)
 
-        ad_vecs = torch.from_numpy(self.ad_cache["ad_vecs"][idx]).to(self.device)
-        cross_vecs = torch.from_numpy(self.ad_cache["cross_vecs"][idx]).to(self.device)
+            # Find every candidate in the ad cache
+            ad_ids = self.ad_cache["ad_ids"]
+            idx = np.clip(np.searchsorted(ad_ids, candidate_ad_ids), 0, len(ad_ids) - 1)
+            found = ad_ids[idx] == candidate_ad_ids
+            if not found.all():
+                n_missing = int((~found).sum())
+                raise KeyError(f"{n_missing} candidate ad id(s) not in the ad cache")
+            ad_vecs = torch.from_numpy(self.ad_cache["ad_vecs"][idx]).to(self.device)
+            cross_vecs = torch.from_numpy(self.ad_cache["cross_vecs"][idx]).to(self.device)
 
-        user_batch = {k: v.to(self.device) for k, v in self.user_cache.batch_for(raw_user_id).items()}
-        u_vec = self.model.user(user_batch)  # (1, tower_dim)
-        stage1 = torch.sigmoid((u_vec * ad_vecs).sum(-1) + self.model.dot_bias).cpu().numpy()
+            # Run the user tower once
+            user_batch = {}
+            for key, value in self.user_cache.batch_for(raw_user_id).items():
+                user_batch[key] = value.to(self.device)
+            u_vec = self.model.user(user_batch)  # shape (1, tower_dim)
 
-        n = len(candidate_ad_ids)
-        k = max(1, int(round(self.cascade_top_frac * n)))
-        top = np.argsort(-stage1)[:k]
+            # Stage 1: the cheap score for every candidate
+            stage1 = torch.sigmoid((u_vec * ad_vecs).sum(-1) + self.model.dot_bias).cpu().numpy()
 
-        hist_keys = ("hist_cate", "hist_brand", "hist_btag")
-        out = stage1.copy()
-        for s in range(0, k, self.stage2_chunk_size):
-            chunk = top[s:s + self.stage2_chunk_size]
-            m = len(chunk)
-            b_repeated = {key: user_batch[key].expand(m, *user_batch[key].shape[1:]) for key in hist_keys}
-            c = self.model.cross(cross_vecs[chunk], b_repeated)
-            u_rep, a_rep = u_vec.expand(m, -1), ad_vecs[chunk]
-            te_cross = torch.zeros(m, 1, device=self.device)  # standardized prior; see module docstring (2)
-            rich = self.model.inter(torch.cat([u_rep, a_rep, c, te_cross], -1)) + self.model.task_bias(torch.cat([u_rep, a_rep], -1))
-            out[chunk] = torch.sigmoid(rich.squeeze(-1)).cpu().numpy()
-        return out
+            # Keep the top fraction
+            n = len(candidate_ad_ids)
+            k = max(1, int(round(self.cascade_top_frac * n)))
+            top = np.argsort(-stage1)[:k]
+
+            # Stage 2: the rich score for the top candidates, in chunks
+            out = stage1.copy()
+            for start in range(0, k, self.stage2_chunk_size):
+                chunk = top[start:start + self.stage2_chunk_size]
+                m = len(chunk)
+                # The same user history, repeated once per candidate in the chunk
+                history_batch = {
+                    "hist_cate": user_batch["hist_cate"].expand(m, -1),
+                    "hist_brand": user_batch["hist_brand"].expand(m, -1),
+                    "hist_btag": user_batch["hist_btag"].expand(m, -1),
+                }
+                c = self.model.cross(cross_vecs[chunk], history_batch)
+                u_rep = u_vec.expand(m, -1)
+                a_rep = ad_vecs[chunk]
+                te_cross = torch.zeros(m, 1, device=self.device)  # the standardised prior, see the note at the top
+                rich = self.model.inter(torch.cat([u_rep, a_rep, c, te_cross], -1))
+                rich = rich + self.model.task_bias(torch.cat([u_rep, a_rep], -1))
+                out[chunk] = torch.sigmoid(rich.squeeze(-1)).cpu().numpy()
+            return out

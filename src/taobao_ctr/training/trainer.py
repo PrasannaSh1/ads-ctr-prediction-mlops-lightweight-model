@@ -1,11 +1,8 @@
-"""train_model(): best-checkpoint early stopping, predict(), metrics().
+"""Training loop, prediction and metrics for the deep models.
 
-Checks validation AUC every ~eval_every_rows training rows; keeps the best checkpoint; stops
-after `patience` checks without improvement, up to `max_epochs`. `report(i, auc)`, if given,
-lets Optuna prune a trial (see training/tune.py).
+train_model() checks the validation AUC every eval_every_rows training rows, remembers the best
+weights, and stops after `patience` checks without improvement (or after max_epochs).
 """
-from __future__ import annotations
-
 import gc
 import time
 
@@ -13,101 +10,155 @@ import numpy as np
 import torch
 from sklearn.metrics import average_precision_score, log_loss, roc_auc_score
 
-from taobao_ctr.config import Config
-from taobao_ctr.data.dataset import Dataset
 from taobao_ctr.training.batches import batches
-from taobao_ctr.training.losses import make_loss
+from taobao_ctr.training.losses import compute_loss
 from taobao_ctr.training.optim import make_optimizer
 
+# The settings Optuna is allowed to change
 HP_KEYS = ["lr", "batch_size", "dropout", "optimizer", "weight_decay", "loss", "gamma", "pos_weight", "cotrain_weight"]
 
 
-def set_seed(seed: int) -> None:
+def set_seed(seed):
+    """Same seed -> same random numbers -> the same result every run."""
     np.random.seed(seed)
     torch.manual_seed(seed)
 
 
-def free_memory() -> None:
+def free_memory():
     """Give unused RAM and GPU memory back."""
     gc.collect()
     torch.cuda.empty_cache()
 
 
-def default_hp(cfg: Config) -> dict:
-    """Default model + training settings from params.yaml."""
-    m, t = cfg.model, cfg.train
+def default_hp(config):
+    """The default model + training settings, read from params.yaml."""
+    m = config["model"]
+    t = config["train"]
+    hp = {
+        "emb_dim": m["emb_dim"],
+        "tower_dim": m["tower_dim"],
+        "n_heads": m["n_heads"],
+        "n_query_tokens": m["n_query_tokens"],
+        "max_epochs": t["max_epochs"],
+        "eval_every_rows": t["eval_every_rows"],
+        "patience": t["patience"],
+        "lr": t["lr"],
+        "batch_size": t["batch_size"],
+        "dropout": t["dropout"],
+        "optimizer": t["optimizer"],
+        "weight_decay": t["weight_decay"],
+        "loss": t["loss"],
+        "gamma": t["gamma"],
+        "pos_weight": t["pos_weight"],
+        "cotrain_weight": t["cotrain_weight"],
+    }
+    return hp
+
+
+def predict(model, data, rows, device, batch_size=16384):
+    """Click probabilities for the given rows. Returns a dict: head name -> numpy array."""
+    model.eval()
+    outputs = {}  # head name -> list of arrays, one per batch
+    with torch.no_grad():
+        for batch in batches(data, rows, batch_size, device):
+            result = model(batch)
+            for head_name, logits in result.items():
+                probabilities = torch.sigmoid(logits).float().cpu().numpy()
+                if head_name not in outputs:
+                    outputs[head_name] = []
+                outputs[head_name].append(probabilities)
+    final = {}
+    for head_name in outputs:
+        final[head_name] = np.concatenate(outputs[head_name])
+    return final
+
+
+def metrics(labels, probabilities):
+    """AUC, log loss and PR-AUC."""
+    probabilities = np.clip(probabilities, 1e-7, 1 - 1e-7)
     return {
-        "emb_dim": m.emb_dim, "tower_dim": m.tower_dim, "n_heads": m.n_heads, "n_query_tokens": m.n_query_tokens,
-        "max_epochs": t.max_epochs, "eval_every_rows": t.eval_every_rows, "patience": t.patience,
-        "lr": t.lr, "batch_size": t.batch_size, "dropout": t.dropout, "optimizer": t.optimizer,
-        "weight_decay": t.weight_decay, "loss": t.loss, "gamma": t.gamma, "pos_weight": t.pos_weight,
-        "cotrain_weight": t.cotrain_weight,
+        "AUC": roc_auc_score(labels, probabilities),
+        "LogLoss": log_loss(labels, probabilities),
+        "PR_AUC": average_precision_score(labels, probabilities),
     }
 
 
-@torch.no_grad()
-def predict(model: torch.nn.Module, data: Dataset, rows: np.ndarray, device: torch.device, batch_size: int = 16384) -> dict:
-    """Click probabilities of every head for the given rows."""
-    model.eval()
-    out = {}
-    for b in batches(data, rows, batch_size, device):
-        for k, v in model(b).items():
-            out.setdefault(k, []).append(torch.sigmoid(v).float().cpu().numpy())
-    return {k: np.concatenate(v) for k, v in out.items()}
+def copy_weights(model):
+    """A copy of all the model's weights, so we can go back to them later."""
+    state = {}
+    for name, value in model.state_dict().items():
+        state[name] = value.detach().clone()
+    return state
 
 
-def metrics(labels: np.ndarray, p: np.ndarray) -> dict:
-    p = np.clip(p, 1e-7, 1 - 1e-7)
-    return {"AUC": roc_auc_score(labels, p), "LogLoss": log_loss(labels, p), "PR_AUC": average_precision_score(labels, p)}
+def check_validation(model, data, val_rows, device, step, best, curve, bad_checks, start_time, verbose, report):
+    """Score the model on the validation rows and remember it if it is the best so far.
+
+    Returns the new number of checks in a row without improvement.
+    """
+    probabilities = predict(model, data, val_rows, device)["logit"]
+    auc = roc_auc_score(data.y[val_rows], probabilities)
+    model.train()  # predict() switched the model to eval mode; switch back
+    curve.append((step, auc))
+
+    if auc > best["auc"] + 1e-4:
+        best["auc"] = auc
+        best["step"] = step
+        best["state"] = copy_weights(model)
+        bad_checks = 0
+    else:
+        bad_checks += 1
+
+    if verbose:
+        minutes = (time.time() - start_time) / 60
+        print(f"    step {step:>6}: val AUC {auc:.4f} (best {best['auc']:.4f}) | {minutes:.1f} min")
+    if report is not None:
+        report(len(curve), auc)  # lets Optuna stop a bad trial early
+    return bad_checks
 
 
-def train_model(
-    model_cls, hp: dict, data: Dataset, fit_rows: np.ndarray, val_rows: np.ndarray,
-    max_epochs: int, eval_every_rows: int, patience: int, device: torch.device, seed: int,
-    report=None, verbose: bool = True,
-):
-    """Train, check validation AUC regularly, keep the best checkpoint."""
+def train_model(model_class, hp, data, fit_rows, val_rows, max_epochs, eval_every_rows, patience,
+                device, seed, report=None, verbose=True):
+    """Train a model and return (model with its best weights, best, curve)."""
     set_seed(seed)
-    model = model_cls(hp, data.sizes, data.seq_len).to(device)
-    opt, loss_fn = make_optimizer(model, hp), make_loss(hp, device)
-    eval_every = max(1, eval_every_rows // hp["batch_size"])
-    best = {"auc": -1.0, "step": 0, "state": None}
-    curve, step, bad, t0 = [], 0, 0, time.time()
+    model = model_class(hp, data.sizes, data.seq_len).to(device)
+    optimizer = make_optimizer(model, hp)
+    eval_every = max(1, eval_every_rows // hp["batch_size"])  # check validation every this many batches
 
-    def check():
-        nonlocal bad
-        auc = roc_auc_score(data.y[val_rows], predict(model, data, val_rows, device)["logit"])
-        model.train()
-        curve.append((step, auc))
-        if auc > best["auc"] + 1e-4:
-            best.update(auc=auc, step=step, state={k: v.detach().clone() for k, v in model.state_dict().items()})
-            bad = 0
-        else:
-            bad += 1
-        if verbose:
-            print(f"    step {step:>6}: val AUC {auc:.4f} (best {best['auc']:.4f}) | {(time.time() - t0) / 60:.1f} min")
-        if report:
-            report(len(curve), auc)  # may raise optuna.TrialPruned
-        return bad >= patience
+    best = {"auc": -1.0, "step": 0, "state": None}
+    curve = []  # list of (step, validation AUC)
+    step = 0
+    bad_checks = 0
+    start_time = time.time()
+    stop = False
 
     model.train()
-    stop = False
     for _epoch in range(max_epochs):
-        for b in batches(data, fit_rows, hp["batch_size"], device, shuffle=True):
-            out = model(b)
-            loss = loss_fn(out["logit"], b["label"])
-            if "cotrain_logit" in out:  # 3-tower: also train the cheap head
-                loss = loss + hp["cotrain_weight"] * loss_fn(out["cotrain_logit"], b["label"])
-            opt.zero_grad()
+        for batch in batches(data, fit_rows, hp["batch_size"], device, shuffle=True):
+            output = model(batch)
+            loss = compute_loss(output["logit"], batch["label"], hp, device)
+            if "cotrain_logit" in output:
+                # The 3-tower model: also train its cheap head
+                loss = loss + hp["cotrain_weight"] * compute_loss(output["cotrain_logit"], batch["label"], hp, device)
+            optimizer.zero_grad()
             loss.backward()
-            opt.step()
+            optimizer.step()
             step += 1
-            if step % eval_every == 0 and check():
-                stop = True
-                break
+
+            if step % eval_every == 0:
+                bad_checks = check_validation(model, data, val_rows, device, step, best, curve, bad_checks,
+                                              start_time, verbose, report)
+                if bad_checks >= patience:
+                    stop = True
+                    break
         if stop:
             break
-        if step % eval_every != 0 and check():  # also check at the end of every epoch
-            break
-    model.load_state_dict(best["state"])
+        if step % eval_every != 0:
+            # Also check at the end of every epoch
+            bad_checks = check_validation(model, data, val_rows, device, step, best, curve, bad_checks,
+                                          start_time, verbose, report)
+            if bad_checks >= patience:
+                break
+
+    model.load_state_dict(best["state"])  # go back to the best weights seen
     return model, best, curve

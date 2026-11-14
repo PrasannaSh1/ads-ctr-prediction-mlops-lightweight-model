@@ -1,54 +1,54 @@
-"""Precompute ad-tower vectors and cross-tower query projections for every ad once, offline. The
-scorer then only runs the user tower per request and does a cheap dot product / attention over
-these cached vectors instead of recomputing the ad side for every request.
+"""The ad cache: run the ad tower once for every ad and keep its two output vectors.
 
-Simplification: an ad's features/click-rates are taken from its most recent impression row in
-the dataset, not re-aggregated online -- a real feature store would refresh these continuously.
+At request time the scorer only runs the user tower and uses these cached vectors, instead of
+running the ad side again for every request.
+
+Simplification: an ad's features and click rates are taken from its most recent impression in
+the dataset. A real system would refresh them continuously from a feature store.
 """
-from __future__ import annotations
-
-from pathlib import Path
-
 import numpy as np
 import torch
 
-from taobao_ctr.data.dataset import Dataset
 from taobao_ctr.models.layers import AD_FEATS
-from taobao_ctr.models.towers import ThreeTower
 
 
-def _last_row_per_ad(dataset: Dataset) -> tuple[np.ndarray, np.ndarray]:
-    """Encoded ad ids (1..K, ascending) and the row index of each ad's most recent impression."""
+def last_row_per_ad(dataset):
+    """For every ad: its encoded id and the row of its most recent impression."""
     ad_ids = dataset.X["adgroup_id"]
     order = np.argsort(dataset.ts, kind="stable")
-    last_row: dict[int, int] = {}
-    for idx in order:  # later rows overwrite earlier ones -> ends up with the most recent per ad
+    last_row = {}
+    for idx in order:  # later rows overwrite earlier ones, so we end with the most recent row per ad
         last_row[int(ad_ids[idx])] = int(idx)
     unique_ids = np.array(sorted(last_row))
-    rows = np.array([last_row[a] for a in unique_ids])
-    return unique_ids, rows
+    rows = []
+    for ad_id in unique_ids:
+        rows.append(last_row[ad_id])
+    return unique_ids, np.array(rows)
 
 
-def build_ad_cache(model: ThreeTower, dataset: Dataset, device: torch.device, batch_size: int = 4096) -> dict:
+def build_ad_cache(model, dataset, device, batch_size=4096):
     """Returns {"ad_ids": (K,), "ad_vecs": (K, tower_dim), "cross_vecs": (K, tower_dim)}."""
-    ad_ids, rows = _last_row_per_ad(dataset)
+    ad_ids, rows = last_row_per_ad(dataset)
     model.to(device).eval()
-    ad_vecs, cross_vecs = [], []
+    ad_vecs = []
+    cross_vecs = []
     with torch.no_grad():
-        for s in range(0, len(rows), batch_size):
-            chunk = rows[s:s + batch_size]
-            b = {key: torch.from_numpy(dataset.X[key][chunk].astype(np.int64)).to(device) for key, _ in AD_FEATS}
-            b["te"] = torch.from_numpy(dataset.TE[chunk]).to(device)
-            vec, cross = model.ad(b)
-            ad_vecs.append(vec.cpu().numpy())
-            cross_vecs.append(cross.cpu().numpy())
+        for start in range(0, len(rows), batch_size):
+            chunk = rows[start:start + batch_size]
+            batch = {}
+            for batch_key, _table_name in AD_FEATS:
+                batch[batch_key] = torch.from_numpy(dataset.X[batch_key][chunk].astype(np.int64)).to(device)
+            batch["te"] = torch.from_numpy(dataset.TE[chunk]).to(device)
+            ad_vector, cross_query = model.ad(batch)
+            ad_vecs.append(ad_vector.cpu().numpy())
+            cross_vecs.append(cross_query.cpu().numpy())
     return {"ad_ids": ad_ids, "ad_vecs": np.concatenate(ad_vecs), "cross_vecs": np.concatenate(cross_vecs)}
 
 
-def save_ad_cache(path: str | Path, cache: dict) -> None:
+def save_ad_cache(path, cache):
     np.savez(path, ad_ids=cache["ad_ids"], ad_vecs=cache["ad_vecs"], cross_vecs=cache["cross_vecs"])
 
 
-def load_ad_cache(path: str | Path) -> dict:
+def load_ad_cache(path):
     a = np.load(path)
     return {"ad_ids": a["ad_ids"], "ad_vecs": a["ad_vecs"], "cross_vecs": a["cross_vecs"]}

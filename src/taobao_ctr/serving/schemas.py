@@ -1,6 +1,4 @@
-"""Pydantic request/response models for the FastAPI app (/health, /score, /model-info)."""
-from __future__ import annotations
-
+"""The shapes of the requests and responses of the API. FastAPI checks every request against these."""
 from pydantic import BaseModel, Field
 
 
